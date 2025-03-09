@@ -65,6 +65,99 @@ const SCORE_BASIC_ENEMY = 1;  // Points for destroying basic enemies
 const MAX_HIGH_SCORES = 10;   // Number of high scores to track
 const NAME_MAX_LENGTH = 8;    // Increased from 3 to 8 characters for names
 
+// Add touch control constants after other constants
+const MOBILE_SETTINGS = {
+    hapticFeedback: true,
+    buttonOpacity: 0.3,
+    activeButtonOpacity: 0.5,
+    minimumTouchSize: 48, // Minimum 48x48px touch target
+    doubleTapTimeout: 300 // ms between taps
+};
+
+// Update touch control constants
+const TOUCH_CONTROLS = {
+    enabled: false,
+    buttonSize: Math.max(60, MOBILE_SETTINGS.minimumTouchSize),
+    buttonPadding: 10,
+    buttonColor: `rgba(255, 255, 255, ${MOBILE_SETTINGS.buttonOpacity})`,
+    buttonActiveColor: `rgba(255, 255, 255, ${MOBILE_SETTINGS.activeButtonOpacity})`,
+    fireButtonColor: `rgba(255, 0, 0, ${MOBILE_SETTINGS.buttonOpacity})`,
+    fireButtonActiveColor: `rgba(255, 0, 0, ${MOBILE_SETTINGS.activeButtonOpacity})`,
+    missileButtonColor: `rgba(0, 255, 255, ${MOBILE_SETTINGS.buttonOpacity})`,
+    missileButtonActiveColor: `rgba(0, 255, 255, ${MOBILE_SETTINGS.activeButtonOpacity})`
+};
+
+// Add virtual keyboard constants after touch controls
+const VIRTUAL_KEYBOARD = {
+    enabled: false,
+    keys: [
+        ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+        ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+        ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+        ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
+    ],
+    keySize: 40,
+    padding: 5,
+    color: 'rgba(255, 255, 255, 0.3)',
+    activeColor: 'rgba(255, 255, 255, 0.5)',
+    textColor: '#FFFFFF'
+};
+
+// High Score Service for managing scores
+const HighScoreService = {
+    scores: [],
+    storageKey: 'highScores',
+    maxScores: MAX_HIGH_SCORES,
+
+    async init() {
+        try {
+            // Load scores from localStorage
+            const savedScores = localStorage.getItem(this.storageKey);
+            this.scores = savedScores ? JSON.parse(savedScores) : [];
+            return true;
+        } catch (error) {
+            console.error('Failed to initialize high scores:', error);
+            this.scores = [];
+            return false;
+        }
+    },
+
+    async loadHighScores() {
+        return this.scores;
+    },
+
+    async saveHighScore(name, score) {
+        // Add new score
+        this.scores.push({ name, score });
+        
+        // Sort by score (descending)
+        this.scores.sort((a, b) => b.score - a.score);
+        
+        // Keep only top scores
+        this.scores = this.scores.slice(0, this.maxScores);
+        
+        // Save to storage
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify(this.scores));
+            return true;
+        } catch (error) {
+            console.error('Failed to save high score:', error);
+            return false;
+        }
+    },
+
+    async clearHighScores() {
+        try {
+            this.scores = [];
+            localStorage.removeItem(this.storageKey);
+            return true;
+        } catch (error) {
+            console.error('Failed to clear high scores:', error);
+            return false;
+        }
+    }
+};
+
 // Game variables
 let canvas;
 let ctx;
@@ -91,6 +184,16 @@ let playerName = '';          // Current player name
 let gameStarted = false;     // Track if game has started
 let nameBlinkTimer = 0;       // For blinking cursor effect
 
+// Add touch state tracking
+let touchControls = {
+    up: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
+    down: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
+    left: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
+    right: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
+    fire: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
+    missile: { pressed: false, x: 0, y: 0, width: 0, height: 0 }
+};
+
 let player = {
     x: 50,
     y: CANVAS_HEIGHT * 2/3, // Start in the middle of water section
@@ -109,23 +212,111 @@ let player = {
     hitTime: 0
 };
 
+// Add after game variables
+let targetingAngle = 0; // Angle in radians, 0 points right
+const TARGETING_SPEED = 0.05; // Speed of targeting vector rotation
+const TARGETING_LENGTH = CANVAS_WIDTH; // Maximum length of targeting vector
+
 // Initialize the game
-function init() {
-    canvas = document.getElementById('gameCanvas');
-    ctx = canvas.getContext('2d');
+async function init() {
+    try {
+        canvas = document.getElementById('gameCanvas');
+        if (!canvas) {
+            throw new Error('Canvas element not found');
+        }
+        
+        ctx = canvas.getContext('2d');
+        if (!ctx) {
+            throw new Error('Could not get canvas context');
+        }
+        
+        // Check if device supports touch
+        TOUCH_CONTROLS.enabled = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        VIRTUAL_KEYBOARD.enabled = TOUCH_CONTROLS.enabled; // Enable virtual keyboard on touch devices
+        
+        // Make canvas responsive
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Initialize high score service and load scores
+        await HighScoreService.init();
+        await loadHighScores();
+        
+        // Add event listeners
+        setupControls();
+        
+        // Hide cursor during gameplay, show during name entry
+        updateCursorVisibility();
+        
+        // Start the game loop
+        gameLoop();
+    } catch (error) {
+        console.error('Failed to initialize game:', error);
+        if (ctx) {
+            ctx.fillStyle = '#FF0000';
+            ctx.font = '24px Arial';
+            ctx.fillText('Failed to initialize game. Please refresh.', 50, 50);
+        }
+    }
+}
+
+// Add responsive canvas sizing
+function resizeCanvas() {
+    const containerWidth = window.innerWidth - 40; // Account for body padding
+    const containerHeight = window.innerHeight - 40;
+    const aspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
     
-    // Set canvas size
+    let newWidth = containerWidth;
+    let newHeight = containerWidth / aspectRatio;
+    
+    if (newHeight > containerHeight) {
+        newHeight = containerHeight;
+        newWidth = containerHeight * aspectRatio;
+    }
+    
+    canvas.style.width = `${newWidth}px`;
+    canvas.style.height = `${newHeight}px`;
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
     
-    // Add event listeners
-    setupControls();
+    // Update touch control positions
+    if (TOUCH_CONTROLS.enabled) {
+        setupTouchControls();
+    }
     
-    // Start the game loop
-    gameLoop();
+    // Ensure cursor visibility is correct after resize
+    updateCursorVisibility();
 }
 
-// Setup keyboard and mouse controls
+// Add touch control setup
+function setupTouchControls() {
+    const size = TOUCH_CONTROLS.buttonSize;
+    const padding = TOUCH_CONTROLS.buttonPadding;
+    
+    // D-pad on left side
+    touchControls.left.x = padding;
+    touchControls.left.y = CANVAS_HEIGHT - size * 2;
+    touchControls.right.x = padding + size * 2;
+    touchControls.right.y = CANVAS_HEIGHT - size * 2;
+    touchControls.up.x = padding + size;
+    touchControls.up.y = CANVAS_HEIGHT - size * 3;
+    touchControls.down.x = padding + size;
+    touchControls.down.y = CANVAS_HEIGHT - size;
+    
+    // Action buttons on right side
+    touchControls.fire.x = CANVAS_WIDTH - padding - size * 2;
+    touchControls.fire.y = CANVAS_HEIGHT - size * 2;
+    touchControls.missile.x = CANVAS_WIDTH - padding - size;
+    touchControls.missile.y = CANVAS_HEIGHT - size * 3;
+    
+    // Set sizes for all buttons
+    Object.values(touchControls).forEach(button => {
+        button.width = size;
+        button.height = size;
+    });
+}
+
+// Update setupControls function
 function setupControls() {
     // Keyboard controls
     window.addEventListener('keydown', (e) => {
@@ -146,8 +337,10 @@ function setupControls() {
     // Mouse controls
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
-        mouse.x = e.clientX - rect.left;
-        mouse.y = e.clientY - rect.top;
+        const scaleX = CANVAS_WIDTH / rect.width;
+        const scaleY = CANVAS_HEIGHT / rect.height;
+        mouse.x = (e.clientX - rect.left) * scaleX;
+        mouse.y = (e.clientY - rect.top) * scaleY;
     });
     
     canvas.addEventListener('mousedown', (e) => {
@@ -175,28 +368,60 @@ function setupControls() {
     canvas.addEventListener('mouseleave', () => {
         isMouseDown = false;
     });
+    
+    if (TOUCH_CONTROLS.enabled) {
+        canvas.addEventListener('touchstart', handleTouchStart);
+        canvas.addEventListener('touchmove', handleTouchMove);
+        canvas.addEventListener('touchend', handleTouchEnd);
+        canvas.addEventListener('touchcancel', handleTouchEnd);
+    }
+    
+    // Add event listener for cursor visibility
+    document.addEventListener('mouseover', () => {
+        if (!isEnteringName) {
+            updateCursorVisibility();
+        }
+    });
+}
+
+// Update cursor visibility based on game state
+function updateCursorVisibility() {
+    const cursorStyle = isEnteringName ? 'default' : 'none';
+    
+    // Update cursor style on multiple levels to ensure it's hidden
+    if (canvas) {
+        canvas.style.cursor = cursorStyle;
+    }
+    document.body.style.cursor = cursorStyle;
+    document.documentElement.style.cursor = cursorStyle;
+    
+    // Update all elements if we're hiding the cursor
+    if (!isEnteringName) {
+        const elements = document.getElementsByTagName('*');
+        for (let i = 0; i < elements.length; i++) {
+            elements[i].style.cursor = 'none';
+        }
+    }
 }
 
 // Update player movement state
 function updateMovement(key, isPressed) {
-    switch(key.toLowerCase()) {
+    switch(key.toLowerCase()) {  // Convert to lowercase to handle both cases
+        case 'arrowup':
         case 'w':
             player.moving.up = isPressed;
             break;
+        case 'arrowdown':
         case 's':
             player.moving.down = isPressed;
             break;
+        case 'arrowleft':
         case 'a':
             player.moving.left = isPressed;
             break;
+        case 'arrowright':
         case 'd':
             player.moving.right = isPressed;
-            break;
-        case ' ':
-            if (isPressed && lockOnTarget && player.missiles > 0) {
-                fireMissile(lockOnTarget);
-                player.missiles--;
-            }
             break;
     }
 }
@@ -211,7 +436,7 @@ function fireCannon() {
         y: player.y + player.height / 2
     };
     
-    // Calculate direction vector
+    // Calculate direction to mouse position
     const dx = mouse.x - shipCenter.x;
     const dy = mouse.y - shipCenter.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -220,7 +445,6 @@ function fireCannon() {
     const normalizedDx = dx / distance;
     const normalizedDy = dy / distance;
     
-    // Create new projectile
     projectiles.push({
         x: shipCenter.x,
         y: shipCenter.y,
@@ -659,6 +883,14 @@ function update() {
         flash.duration -= 16;
         return flash.duration > 0;
     });
+
+    if (TOUCH_CONTROLS.enabled) {
+        // Update player movement based on touch controls
+        player.moving.up = touchControls.up.pressed;
+        player.moving.down = touchControls.down.pressed;
+        player.moving.left = touchControls.left.pressed;
+        player.moving.right = touchControls.right.pressed;
+    }
 }
 
 // Check if target is under crosshair
@@ -699,28 +931,66 @@ function drawEnvironment() {
     ctx.fillRect(0, WATER_START, CANVAS_WIDTH, CANVAS_HEIGHT - WATER_START);
 }
 
-// Draw aim line
-function drawAimLine() {
+// Draw targeting vector
+function drawTargetingVector() {
     const shipCenter = {
         x: player.x + player.width,
         y: player.y + player.height / 2
     };
     
-    // Debug aim line (commented out)
-    /*
+    // Calculate targeting vector end point
+    let endX = mouse.x;
+    let endY = mouse.y;
+    let targetFound = false;
+    
+    // Check for intersection with enemies
+    for (const enemy of [...enemies, ...aircraft]) {
+        const intersection = rayBoxIntersection(
+            shipCenter,
+            { 
+                x: (mouse.x - shipCenter.x) / TARGETING_LENGTH,
+                y: (mouse.y - shipCenter.y) / TARGETING_LENGTH
+            },
+            enemy
+        );
+        
+        if (intersection) {
+            endX = intersection.x;
+            endY = intersection.y;
+            lockOnTarget = enemy;
+            targetFound = true;
+            break;
+        }
+    }
+    
+    if (!targetFound) {
+        lockOnTarget = null;
+    }
+    
+    // Draw targeting vector
     ctx.beginPath();
     ctx.moveTo(shipCenter.x, shipCenter.y);
-    ctx.lineTo(mouse.x, mouse.y);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 1;
+    ctx.lineTo(endX, endY);
+    ctx.strokeStyle = lockOnTarget ? 'rgba(255, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 2;
     ctx.stroke();
-    */
     
+    // Draw lock-on indicator if target found
+    if (lockOnTarget) {
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+        ctx.strokeRect(
+            lockOnTarget.x - 2,
+            lockOnTarget.y - 2,
+            lockOnTarget.width + 4,
+            lockOnTarget.height + 4
+        );
+    }
+
     // Draw crosshair
     const crosshairSize = 10;
     const lineWidth = 2;
     
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.strokeStyle = lockOnTarget ? 'rgba(255, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
     ctx.lineWidth = lineWidth;
     
     // Horizontal line
@@ -738,23 +1008,8 @@ function drawAimLine() {
     // Center dot
     ctx.beginPath();
     ctx.arc(mouse.x, mouse.y, 2, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillStyle = lockOnTarget ? 'rgba(255, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
     ctx.fill();
-    
-    // Draw lock-on box if target is being locked
-    if (lockOnTarget) {
-        const lockTime = Date.now();
-        const lockProgress = Math.min(1, (lockTime - lockStartTime) / MISSILE_LOCK_TIME);
-        
-        ctx.strokeStyle = `rgba(255, 0, 0, ${lockProgress})`;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(
-            lockOnTarget.x - 2,
-            lockOnTarget.y - 2,
-            lockOnTarget.width + 4,
-            lockOnTarget.height + 4
-        );
-    }
 }
 
 // Draw projectiles
@@ -823,8 +1078,8 @@ function draw() {
     drawEnemies();
     drawAircraft();
     
-    // Draw aim line
-    drawAimLine();
+    // Draw targeting vector
+    drawTargetingVector();
     
     // Draw projectiles
     drawProjectiles();
@@ -859,6 +1114,11 @@ function draw() {
     // Draw game over screen if needed
     if (gameOver) {
         drawGameOver();
+    }
+
+    // Draw touch controls if enabled
+    if (TOUCH_CONTROLS.enabled && !isEnteringName && !gameOver) {
+        drawTouchControls();
     }
 }
 
@@ -929,6 +1189,38 @@ function drawNameEntry() {
     
     ctx.font = '20px Arial';
     ctx.fillText('Use A-Z and 0-9 • Press ENTER to Start', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 90);
+    
+    // Draw virtual keyboard if enabled
+    if (VIRTUAL_KEYBOARD.enabled) {
+        drawVirtualKeyboard();
+        
+        // Add touch-friendly buttons
+        const buttonWidth = 120;
+        const buttonHeight = 40;
+        const buttonSpacing = 20;
+        const totalWidth = buttonWidth * 2 + buttonSpacing;
+        const startX = (CANVAS_WIDTH - totalWidth) / 2;
+        const startY = CANVAS_HEIGHT - 80;
+        
+        // Draw Backspace button
+        ctx.fillStyle = TOUCH_CONTROLS.buttonColor;
+        ctx.fillRect(startX, startY, buttonWidth, buttonHeight);
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(startX, startY, buttonWidth, buttonHeight);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Backspace', startX + buttonWidth/2, startY + buttonHeight/2 + 7);
+        
+        // Draw Enter button
+        ctx.fillStyle = playerName.length > 0 ? '#00FF00' : TOUCH_CONTROLS.buttonColor;
+        ctx.fillRect(startX + buttonWidth + buttonSpacing, startY, buttonWidth, buttonHeight);
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.strokeRect(startX + buttonWidth + buttonSpacing, startY, buttonWidth, buttonHeight);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText('Enter', startX + buttonWidth + buttonSpacing + buttonWidth/2, startY + buttonHeight/2 + 7);
+    }
 }
 
 // Draw game over screen
@@ -992,11 +1284,14 @@ function handleNameEntry(key) {
 }
 
 // Add score to high scores
-function addHighScore(name, score) {
-    highScores.push({ name, score });
-    highScores.sort((a, b) => b.score - a.score);  // Sort by score descending
-    highScores = highScores.slice(0, MAX_HIGH_SCORES);  // Keep only top scores
-    localStorage.setItem('highScores', JSON.stringify(highScores));  // Save to storage
+async function addHighScore(name, score) {
+    await HighScoreService.saveHighScore(name, score);
+    highScores = await HighScoreService.loadHighScores();
+}
+
+// Load high scores
+async function loadHighScores() {
+    highScores = await HighScoreService.loadHighScores();
 }
 
 // Reset game state
@@ -1056,4 +1351,257 @@ function createHitFlash(target) {
         target,
         duration: HIT_FLASH_DURATION
     });
+}
+
+// Add touch event handlers
+function handleTouchStart(e) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    Array.from(e.touches).forEach(touch => {
+        const x = (touch.clientX - rect.left) * scaleX;
+        const y = (touch.clientY - rect.top) * scaleY;
+        
+        if (isEnteringName && VIRTUAL_KEYBOARD.enabled) {
+            handleVirtualKeyboardTouch(x, y);
+            triggerHapticFeedback(25); // Shorter vibration for keyboard
+        } else {
+            // Check each button
+            Object.entries(touchControls).forEach(([key, button]) => {
+                if (x >= button.x && x <= button.x + button.width &&
+                    y >= button.y && y <= button.y + button.height) {
+                    button.pressed = true;
+                    if (key === 'fire') {
+                        isMouseDown = true;
+                        triggerHapticFeedback(50);
+                    } else if (key === 'missile' && lockOnTarget && player.missiles > 0) {
+                        fireMissile(lockOnTarget);
+                        player.missiles--;
+                        triggerHapticFeedback(100); // Longer vibration for missile
+                    }
+                }
+            });
+            
+            // Update aim position for non-button touches
+            if (!Object.values(touchControls).some(button => button.pressed)) {
+                mouse.x = x;
+                mouse.y = y;
+            }
+        }
+    });
+}
+
+function handleTouchMove(e) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    // Update aim position for the last touch
+    const touch = e.touches[e.touches.length - 1];
+    mouse.x = (touch.clientX - rect.left) * scaleX;
+    mouse.y = (touch.clientY - rect.top) * scaleY;
+}
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    // Reset all button states if no touches remain
+    if (e.touches.length === 0) {
+        Object.values(touchControls).forEach(button => button.pressed = false);
+        isMouseDown = false;
+    }
+}
+
+// Add touch control drawing
+function drawTouchControls() {
+    // Draw D-pad
+    Object.entries(touchControls).forEach(([key, button]) => {
+        ctx.fillStyle = button.pressed ? 
+            (key === 'fire' ? TOUCH_CONTROLS.fireButtonActiveColor :
+             key === 'missile' ? TOUCH_CONTROLS.missileButtonActiveColor :
+             TOUCH_CONTROLS.buttonActiveColor) :
+            (key === 'fire' ? TOUCH_CONTROLS.fireButtonColor :
+             key === 'missile' ? TOUCH_CONTROLS.missileButtonColor :
+             TOUCH_CONTROLS.buttonColor);
+        
+        ctx.fillRect(button.x, button.y, button.width, button.height);
+        
+        // Draw button symbols
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        
+        switch(key) {
+            case 'up':
+                ctx.moveTo(button.x + button.width/2, button.y + button.height*0.2);
+                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.8);
+                ctx.moveTo(button.x + button.width*0.2, button.y + button.height*0.5);
+                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.2);
+                ctx.lineTo(button.x + button.width*0.8, button.y + button.height*0.5);
+                break;
+            case 'down':
+                ctx.moveTo(button.x + button.width/2, button.y + button.height*0.2);
+                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.8);
+                ctx.moveTo(button.x + button.width*0.2, button.y + button.height*0.5);
+                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.8);
+                ctx.lineTo(button.x + button.width*0.8, button.y + button.height*0.5);
+                break;
+            case 'left':
+                ctx.moveTo(button.x + button.width*0.2, button.y + button.height/2);
+                ctx.lineTo(button.x + button.width*0.8, button.y + button.height/2);
+                ctx.moveTo(button.x + button.width*0.2, button.y + button.height/2);
+                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.2);
+                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.8);
+                break;
+            case 'right':
+                ctx.moveTo(button.x + button.width*0.2, button.y + button.height/2);
+                ctx.lineTo(button.x + button.width*0.8, button.y + button.height/2);
+                ctx.moveTo(button.x + button.width*0.8, button.y + button.height/2);
+                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.2);
+                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.8);
+                break;
+            case 'fire':
+                ctx.arc(button.x + button.width/2, button.y + button.height/2, 
+                       button.width*0.3, 0, Math.PI * 2);
+                break;
+            case 'missile':
+                ctx.moveTo(button.x + button.width*0.2, button.y + button.height*0.8);
+                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.2);
+                ctx.lineTo(button.x + button.width*0.8, button.y + button.height*0.8);
+                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.6);
+                break;
+        }
+        ctx.stroke();
+    });
+}
+
+// Add virtual keyboard touch handling
+function handleVirtualKeyboardTouch(x, y) {
+    const keySize = Math.max(VIRTUAL_KEYBOARD.keySize, MOBILE_SETTINGS.minimumTouchSize);
+    const padding = VIRTUAL_KEYBOARD.padding;
+    const startY = CANVAS_HEIGHT/2 + 120;
+    
+    let keyPressed = false;
+    
+    // Check keyboard keys
+    VIRTUAL_KEYBOARD.keys.forEach((row, rowIndex) => {
+        const rowWidth = row.length * (keySize + padding) - padding;
+        const startX = (CANVAS_WIDTH - rowWidth) / 2;
+        
+        row.forEach((key, keyIndex) => {
+            const keyX = startX + keyIndex * (keySize + padding);
+            const keyY = startY + rowIndex * (keySize + padding);
+            
+            if (x >= keyX && x < keyX + keySize &&
+                y >= keyY && y < keyY + keySize) {
+                if (playerName.length < NAME_MAX_LENGTH) {
+                    playerName += key;
+                    keyPressed = true;
+                }
+            }
+        });
+    });
+    
+    // Check special buttons
+    const buttonWidth = Math.max(120, MOBILE_SETTINGS.minimumTouchSize);
+    const buttonHeight = Math.max(40, MOBILE_SETTINGS.minimumTouchSize);
+    const buttonSpacing = 20;
+    const totalWidth = buttonWidth * 2 + buttonSpacing;
+    const buttonsStartX = (CANVAS_WIDTH - totalWidth) / 2;
+    const buttonsStartY = CANVAS_HEIGHT - 80;
+    
+    // Backspace button
+    if (x >= buttonsStartX && x < buttonsStartX + buttonWidth &&
+        y >= buttonsStartY && y < buttonsStartY + buttonHeight) {
+        playerName = playerName.slice(0, -1);
+        keyPressed = true;
+    }
+    
+    // Enter button
+    if (x >= buttonsStartX + buttonWidth + buttonSpacing && 
+        x < buttonsStartX + buttonWidth * 2 + buttonSpacing &&
+        y >= buttonsStartY && y < buttonsStartY + buttonHeight) {
+        if (playerName.length > 0) {
+            isEnteringName = false;
+            gameStarted = true;
+            updateCursorVisibility();
+            keyPressed = true;
+        }
+    }
+    
+    if (keyPressed) {
+        triggerHapticFeedback(25);
+    }
+}
+
+// Add virtual keyboard drawing function
+function drawVirtualKeyboard() {
+    const startY = CANVAS_HEIGHT/2 + 120;
+    const keySize = VIRTUAL_KEYBOARD.keySize;
+    const padding = VIRTUAL_KEYBOARD.padding;
+    
+    VIRTUAL_KEYBOARD.keys.forEach((row, rowIndex) => {
+        const rowWidth = row.length * (keySize + padding) - padding;
+        const startX = (CANVAS_WIDTH - rowWidth) / 2;
+        
+        row.forEach((key, keyIndex) => {
+            const x = startX + keyIndex * (keySize + padding);
+            const y = startY + rowIndex * (keySize + padding);
+            
+            // Draw key background
+            ctx.fillStyle = VIRTUAL_KEYBOARD.color;
+            ctx.fillRect(x, y, keySize, keySize);
+            
+            // Draw key border
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, keySize, keySize);
+            
+            // Draw key text
+            ctx.fillStyle = VIRTUAL_KEYBOARD.textColor;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(key, x + keySize/2, y + keySize/2);
+        });
+    });
+}
+
+// Add ray-box intersection helper function
+function rayBoxIntersection(origin, direction, box) {
+    const xmin = box.x;
+    const xmax = box.x + box.width;
+    const ymin = box.y;
+    const ymax = box.y + box.height;
+    
+    // Check each edge of the box
+    let tmin = (xmin - origin.x) / direction.x;
+    let tmax = (xmax - origin.x) / direction.x;
+    
+    if (tmin > tmax) [tmin, tmax] = [tmax, tmin];
+    
+    let tymin = (ymin - origin.y) / direction.y;
+    let tymax = (ymax - origin.y) / direction.y;
+    
+    if (tymin > tymax) [tymin, tymax] = [tymax, tymin];
+    
+    if (tmin > tymax || tymin > tmax) return null;
+    
+    const t = tmin > tymax ? tmin : tymin;
+    
+    if (t < 0) return null;
+    
+    return {
+        x: origin.x + direction.x * t,
+        y: origin.y + direction.y * t
+    };
+}
+
+// Add haptic feedback function
+function triggerHapticFeedback(duration = 50) {
+    if (MOBILE_SETTINGS.hapticFeedback && window.navigator.vibrate) {
+        window.navigator.vibrate(duration);
+    }
 } 
