@@ -220,6 +220,11 @@ const TARGETING_LENGTH = CANVAS_WIDTH; // Maximum length of targeting vector
 // Initialize the game
 async function init() {
     try {
+        // Check orientation first
+        if (window.innerWidth < window.innerHeight) {
+            return; // Don't initialize in portrait mode
+        }
+        
         canvas = document.getElementById('gameCanvas');
         if (!canvas) {
             throw new Error('Canvas element not found');
@@ -232,11 +237,15 @@ async function init() {
         
         // Check if device supports touch
         TOUCH_CONTROLS.enabled = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        VIRTUAL_KEYBOARD.enabled = TOUCH_CONTROLS.enabled; // Enable virtual keyboard on touch devices
+        VIRTUAL_KEYBOARD.enabled = TOUCH_CONTROLS.enabled;
         
         // Make canvas responsive
         resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > window.innerHeight) {
+                resizeCanvas();
+            }
+        });
         
         // Initialize high score service and load scores
         await HighScoreService.init();
@@ -268,13 +277,8 @@ function resizeCanvas() {
     
     let newWidth, newHeight;
     
-    // Force landscape mode scaling
-    if (containerWidth < containerHeight) {
-        // Portrait mode - scale to width
-        newWidth = containerWidth;
-        newHeight = containerWidth / aspectRatio;
-    } else {
-        // Landscape mode - fit to screen while maintaining aspect ratio
+    // Only handle landscape mode
+    if (containerWidth > containerHeight) {
         if (containerHeight * aspectRatio <= containerWidth) {
             newHeight = containerHeight;
             newWidth = containerHeight * aspectRatio;
@@ -282,17 +286,17 @@ function resizeCanvas() {
             newWidth = containerWidth;
             newHeight = containerWidth / aspectRatio;
         }
-    }
-    
-    // Set canvas size
-    canvas.style.width = `${newWidth}px`;
-    canvas.style.height = `${newHeight}px`;
-    canvas.width = CANVAS_WIDTH;
-    canvas.height = CANVAS_HEIGHT;
-    
-    // Update touch control positions
-    if (TOUCH_CONTROLS.enabled) {
-        setupTouchControls();
+        
+        // Set canvas size
+        canvas.style.width = `${newWidth}px`;
+        canvas.style.height = `${newHeight}px`;
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        
+        // Update touch control positions
+        if (TOUCH_CONTROLS.enabled) {
+            setupTouchControls();
+        }
     }
 }
 
