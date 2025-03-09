@@ -260,10 +260,10 @@ async function init() {
     }
 }
 
-// Add responsive canvas sizing
+// Update resizeCanvas function
 function resizeCanvas() {
-    const containerWidth = window.innerWidth - 40; // Account for body padding
-    const containerHeight = window.innerHeight - 40;
+    const containerWidth = window.innerWidth;
+    const containerHeight = window.innerHeight;
     const aspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
     
     let newWidth = containerWidth;
@@ -278,6 +278,11 @@ function resizeCanvas() {
     canvas.style.height = `${newHeight}px`;
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
+    
+    // Center the canvas
+    canvas.style.position = 'absolute';
+    canvas.style.left = `${(containerWidth - newWidth) / 2}px`;
+    canvas.style.top = `${(containerHeight - newHeight) / 2}px`;
     
     // Update touch control positions
     if (TOUCH_CONTROLS.enabled) {
@@ -1258,9 +1263,31 @@ function drawGameOver() {
         ctx.fillText(entry.score.toString().padStart(6, '0'), scoreX, y);
     });
     
-    ctx.textAlign = 'center';  // Reset alignment for the restart text
-    ctx.font = '20px Arial';
-    ctx.fillText('Press R to Restart', CANVAS_WIDTH/2, CANVAS_HEIGHT - 40);
+    // Draw restart button
+    ctx.textAlign = 'center';
+    const buttonWidth = 200;
+    const buttonHeight = 50;
+    const buttonX = CANVAS_WIDTH/2 - buttonWidth/2;
+    const buttonY = CANVAS_HEIGHT - 80;
+    
+    // Draw button background
+    ctx.fillStyle = '#00FF00';
+    ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+    
+    // Draw button text
+    ctx.fillStyle = '#000000';
+    ctx.font = '24px Arial';
+    ctx.fillText('Restart Game', CANVAS_WIDTH/2, buttonY + buttonHeight/2 + 8);
+    
+    // Store button coordinates for touch detection
+    if (!gameOver.restartButton) {
+        gameOver.restartButton = {
+            x: buttonX,
+            y: buttonY,
+            width: buttonWidth,
+            height: buttonHeight
+        };
+    }
 }
 
 // Handle name entry for high score
@@ -1353,7 +1380,7 @@ function createHitFlash(target) {
     });
 }
 
-// Add touch event handlers
+// Update handleTouchStart function to handle restart button
 function handleTouchStart(e) {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
@@ -1364,11 +1391,21 @@ function handleTouchStart(e) {
         const x = (touch.clientX - rect.left) * scaleX;
         const y = (touch.clientY - rect.top) * scaleY;
         
+        if (gameOver && gameOver.restartButton) {
+            const button = gameOver.restartButton;
+            if (x >= button.x && x <= button.x + button.width &&
+                y >= button.y && y <= button.y + button.height) {
+                resetGame();
+                triggerHapticFeedback(50);
+                return;
+            }
+        }
+        
         if (isEnteringName && VIRTUAL_KEYBOARD.enabled) {
             handleVirtualKeyboardTouch(x, y);
-            triggerHapticFeedback(25); // Shorter vibration for keyboard
+            triggerHapticFeedback(25);
         } else {
-            // Check each button
+            // Existing touch control handling...
             Object.entries(touchControls).forEach(([key, button]) => {
                 if (x >= button.x && x <= button.x + button.width &&
                     y >= button.y && y <= button.y + button.height) {
@@ -1379,7 +1416,7 @@ function handleTouchStart(e) {
                     } else if (key === 'missile' && lockOnTarget && player.missiles > 0) {
                         fireMissile(lockOnTarget);
                         player.missiles--;
-                        triggerHapticFeedback(100); // Longer vibration for missile
+                        triggerHapticFeedback(100);
                     }
                 }
             });
@@ -1390,90 +1427,6 @@ function handleTouchStart(e) {
                 mouse.y = y;
             }
         }
-    });
-}
-
-function handleTouchMove(e) {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    
-    // Update aim position for the last touch
-    const touch = e.touches[e.touches.length - 1];
-    mouse.x = (touch.clientX - rect.left) * scaleX;
-    mouse.y = (touch.clientY - rect.top) * scaleY;
-}
-
-function handleTouchEnd(e) {
-    e.preventDefault();
-    // Reset all button states if no touches remain
-    if (e.touches.length === 0) {
-        Object.values(touchControls).forEach(button => button.pressed = false);
-        isMouseDown = false;
-    }
-}
-
-// Add touch control drawing
-function drawTouchControls() {
-    // Draw D-pad
-    Object.entries(touchControls).forEach(([key, button]) => {
-        ctx.fillStyle = button.pressed ? 
-            (key === 'fire' ? TOUCH_CONTROLS.fireButtonActiveColor :
-             key === 'missile' ? TOUCH_CONTROLS.missileButtonActiveColor :
-             TOUCH_CONTROLS.buttonActiveColor) :
-            (key === 'fire' ? TOUCH_CONTROLS.fireButtonColor :
-             key === 'missile' ? TOUCH_CONTROLS.missileButtonColor :
-             TOUCH_CONTROLS.buttonColor);
-        
-        ctx.fillRect(button.x, button.y, button.width, button.height);
-        
-        // Draw button symbols
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        
-        switch(key) {
-            case 'up':
-                ctx.moveTo(button.x + button.width/2, button.y + button.height*0.2);
-                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.8);
-                ctx.moveTo(button.x + button.width*0.2, button.y + button.height*0.5);
-                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.2);
-                ctx.lineTo(button.x + button.width*0.8, button.y + button.height*0.5);
-                break;
-            case 'down':
-                ctx.moveTo(button.x + button.width/2, button.y + button.height*0.2);
-                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.8);
-                ctx.moveTo(button.x + button.width*0.2, button.y + button.height*0.5);
-                ctx.lineTo(button.x + button.width/2, button.y + button.height*0.8);
-                ctx.lineTo(button.x + button.width*0.8, button.y + button.height*0.5);
-                break;
-            case 'left':
-                ctx.moveTo(button.x + button.width*0.2, button.y + button.height/2);
-                ctx.lineTo(button.x + button.width*0.8, button.y + button.height/2);
-                ctx.moveTo(button.x + button.width*0.2, button.y + button.height/2);
-                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.2);
-                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.8);
-                break;
-            case 'right':
-                ctx.moveTo(button.x + button.width*0.2, button.y + button.height/2);
-                ctx.lineTo(button.x + button.width*0.8, button.y + button.height/2);
-                ctx.moveTo(button.x + button.width*0.8, button.y + button.height/2);
-                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.2);
-                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.8);
-                break;
-            case 'fire':
-                ctx.arc(button.x + button.width/2, button.y + button.height/2, 
-                       button.width*0.3, 0, Math.PI * 2);
-                break;
-            case 'missile':
-                ctx.moveTo(button.x + button.width*0.2, button.y + button.height*0.8);
-                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.2);
-                ctx.lineTo(button.x + button.width*0.8, button.y + button.height*0.8);
-                ctx.lineTo(button.x + button.width*0.5, button.y + button.height*0.6);
-                break;
-        }
-        ctx.stroke();
     });
 }
 
