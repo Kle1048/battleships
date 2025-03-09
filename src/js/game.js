@@ -266,31 +266,34 @@ function resizeCanvas() {
     const containerHeight = window.innerHeight;
     const aspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
     
-    let newWidth = containerWidth;
-    let newHeight = containerWidth / aspectRatio;
+    let newWidth, newHeight;
     
-    if (newHeight > containerHeight) {
-        newHeight = containerHeight;
-        newWidth = containerHeight * aspectRatio;
+    // Force landscape mode scaling
+    if (containerWidth < containerHeight) {
+        // Portrait mode - scale to width
+        newWidth = containerWidth;
+        newHeight = containerWidth / aspectRatio;
+    } else {
+        // Landscape mode - fit to screen while maintaining aspect ratio
+        if (containerHeight * aspectRatio <= containerWidth) {
+            newHeight = containerHeight;
+            newWidth = containerHeight * aspectRatio;
+        } else {
+            newWidth = containerWidth;
+            newHeight = containerWidth / aspectRatio;
+        }
     }
     
+    // Set canvas size
     canvas.style.width = `${newWidth}px`;
     canvas.style.height = `${newHeight}px`;
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
     
-    // Center the canvas
-    canvas.style.position = 'absolute';
-    canvas.style.left = `${(containerWidth - newWidth) / 2}px`;
-    canvas.style.top = `${(containerHeight - newHeight) / 2}px`;
-    
     // Update touch control positions
     if (TOUCH_CONTROLS.enabled) {
         setupTouchControls();
     }
-    
-    // Ensure cursor visibility is correct after resize
-    updateCursorVisibility();
 }
 
 // Add touch control setup
@@ -1230,9 +1233,11 @@ function drawNameEntry() {
 
 // Draw game over screen
 function drawGameOver() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    // Semi-transparent overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
+    // Game Over text
     ctx.fillStyle = '#FFFFFF';
     ctx.font = `${GAME_OVER_TEXT_SIZE}px Arial`;
     ctx.textAlign = 'center';
@@ -1242,52 +1247,60 @@ function drawGameOver() {
     // Display final score
     ctx.font = '36px Arial';
     ctx.fillText(`${playerName}'s Score: ${score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/4 + 60);
-
+    
     // Draw high scores
     ctx.font = '30px Arial';
     ctx.fillText('High Scores', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
     
     ctx.font = '24px Arial';
-    const scoreAreaWidth = 400;  // Width of the area for scores
+    const scoreAreaWidth = 400;
     const startX = CANVAS_WIDTH/2 - scoreAreaWidth/2;
     const scoreX = CANVAS_WIDTH/2 + scoreAreaWidth/2;
     
     highScores.slice(0, MAX_HIGH_SCORES).forEach((entry, index) => {
         const y = CANVAS_HEIGHT/2 + 30 + (index * 30);
-        // Draw rank and name (left-aligned)
         ctx.textAlign = 'left';
         ctx.fillText(`${index + 1}. ${entry.name}`, startX, y);
-        
-        // Draw score (right-aligned)
         ctx.textAlign = 'right';
         ctx.fillText(entry.score.toString().padStart(6, '0'), scoreX, y);
     });
     
     // Draw restart button
-    ctx.textAlign = 'center';
     const buttonWidth = 200;
-    const buttonHeight = 50;
+    const buttonHeight = 60; // Increased height for better touch target
     const buttonX = CANVAS_WIDTH/2 - buttonWidth/2;
-    const buttonY = CANVAS_HEIGHT - 80;
+    const buttonY = CANVAS_HEIGHT - 100;
     
-    // Draw button background
-    ctx.fillStyle = '#00FF00';
+    // Button shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(buttonX + 2, buttonY + 2, buttonWidth, buttonHeight);
+    
+    // Button background with gradient
+    const gradient = ctx.createLinearGradient(buttonX, buttonY, buttonX, buttonY + buttonHeight);
+    gradient.addColorStop(0, '#00FF00');
+    gradient.addColorStop(1, '#008800');
+    ctx.fillStyle = gradient;
     ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
     
-    // Draw button text
+    // Button border
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+    
+    // Button text with shadow
     ctx.fillStyle = '#000000';
-    ctx.font = '24px Arial';
-    ctx.fillText('Restart Game', CANVAS_WIDTH/2, buttonY + buttonHeight/2 + 8);
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Restart Game', CANVAS_WIDTH/2, buttonY + buttonHeight/2);
     
     // Store button coordinates for touch detection
-    if (!gameOver.restartButton) {
-        gameOver.restartButton = {
-            x: buttonX,
-            y: buttonY,
-            width: buttonWidth,
-            height: buttonHeight
-        };
-    }
+    gameOver.restartButton = {
+        x: buttonX,
+        y: buttonY,
+        width: buttonWidth,
+        height: buttonHeight
+    };
 }
 
 // Handle name entry for high score
@@ -1380,12 +1393,12 @@ function createHitFlash(target) {
     });
 }
 
-// Update handleTouchStart function to handle restart button
+// Update handleTouchStart function
 function handleTouchStart(e) {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const scaleX = CANVAS_WIDTH / rect.width;
+    const scaleY = CANVAS_HEIGHT / rect.height;
     
     Array.from(e.touches).forEach(touch => {
         const x = (touch.clientX - rect.left) * scaleX;

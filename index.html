@@ -25,11 +25,41 @@
             user-select: none;
             outline: none;
             -webkit-tap-highlight-color: transparent;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #orientation-message {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            color: #fff;
+            text-align: center;
+            padding-top: 50%;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+            z-index: 1000;
+        }
+        @media screen and (orientation: portrait) and (max-width: 768px) {
+            #orientation-message {
+                display: block;
+            }
+            canvas {
+                display: none;
+            }
         }
     </style>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚢</text></svg>">
 </head>
 <body>
+    <div id="orientation-message">
+        Please rotate your device to landscape mode to play the game.
+    </div>
     <canvas id="gameCanvas"></canvas>
     <script src="src/js/game.js"></script>
 </body>
