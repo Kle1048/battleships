@@ -220,11 +220,6 @@ const TARGETING_LENGTH = CANVAS_WIDTH; // Maximum length of targeting vector
 // Initialize the game
 async function init() {
     try {
-        // Check orientation first
-        if (window.innerWidth < window.innerHeight) {
-            return; // Don't initialize in portrait mode
-        }
-        
         canvas = document.getElementById('gameCanvas');
         if (!canvas) {
             throw new Error('Canvas element not found');
@@ -241,11 +236,7 @@ async function init() {
         
         // Make canvas responsive
         resizeCanvas();
-        window.addEventListener('resize', function() {
-            if (window.innerWidth > window.innerHeight) {
-                resizeCanvas();
-            }
-        });
+        window.addEventListener('resize', resizeCanvas);
         
         // Initialize high score service and load scores
         await HighScoreService.init();
@@ -356,6 +347,21 @@ function setupControls() {
     });
     
     canvas.addEventListener('mousedown', (e) => {
+        if (gameOver && gameOver.restartButton) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = CANVAS_WIDTH / rect.width;
+            const scaleY = CANVAS_HEIGHT / rect.height;
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+            
+            const button = gameOver.restartButton;
+            if (mouseX >= button.x && mouseX <= button.x + button.width &&
+                mouseY >= button.y && mouseY <= button.y + button.height) {
+                resetGame();
+                return;
+            }
+        }
+        
         if (e.button === 0) { // Left click
             isMouseDown = true;
             fireCannon(); // Fire immediately when pressed
@@ -1296,9 +1302,9 @@ function drawGameOver() {
     ctx.font = 'bold 24px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Restart Game', CANVAS_WIDTH/2, buttonY + buttonHeight/2);
+    ctx.fillText('Restart Game (R)', CANVAS_WIDTH/2, buttonY + buttonHeight/2);
     
-    // Store button coordinates for touch detection
+    // Store button coordinates for touch/click detection
     gameOver.restartButton = {
         x: buttonX,
         y: buttonY,
