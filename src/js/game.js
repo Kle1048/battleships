@@ -1475,14 +1475,15 @@ function handleTouchStart(e) {
         const x = (touch.clientX - rect.left) * scaleX;
         const y = (touch.clientY - rect.top) * scaleY;
         
-        if (gameOver && gameOver.restartButton) {
+        if (gameOver) {
             const button = gameOver.restartButton;
-            if (x >= button.x && x <= button.x + button.width &&
+            if (button && x >= button.x && x <= button.x + button.width &&
                 y >= button.y && y <= button.y + button.height) {
                 resetGame();
                 triggerHapticFeedback(50);
                 return;
             }
+            return; // Don't process other touches if game is over
         }
         
         if (isEnteringName && VIRTUAL_KEYBOARD.enabled) {
