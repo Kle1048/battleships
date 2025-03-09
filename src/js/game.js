@@ -44,7 +44,7 @@ const ENEMY_WIDTH = 48;
 const ENEMY_HEIGHT = 24;
 const ENEMY_SPEED = 2;
 const ENEMY_SPAWN_INTERVAL = 3000; // Spawn every 3 seconds
-const ENEMY_HEALTH = 30;
+const ENEMY_HEALTH = 60;  // Increased from 45 to 60 to require two missiles (50 damage each)
 const ENEMY_COLOR = '#FF0000';
 const ENEMY_SHOT_INTERVAL = 2000; // Shoot every 2 seconds
 const ENEMY_PROJECTILE_SPEED = 8;
@@ -65,6 +65,23 @@ const SCORE_BASIC_ENEMY = 1;  // Points for destroying basic enemies
 const MAX_HIGH_SCORES = 10;   // Number of high scores to track
 const NAME_MAX_LENGTH = 8;    // Increased from 3 to 8 characters for names
 
+// Add powerup constants at the top with other constants
+const POWERUP_SIZE = 20;
+const POWERUP_SPEED = 1;
+const HEALTH_POWERUP_AMOUNT = 30;
+const MISSILE_POWERUP_AMOUNT = 4;
+const POWERUP_SPAWN_CHANCE = 0.3; // 30% chance on enemy death
+const POWERUP_TYPES = {
+    HEALTH: 'health',
+    MISSILES: 'missiles'
+};
+
+// Add array size limits to prevent memory issues
+const MAX_PROJECTILES = 100;
+const MAX_ENEMY_PROJECTILES = 100;
+const MAX_EXPLOSIONS = 20;
+const MAX_HIT_FLASHES = 20;
+
 // Game variables
 let canvas;
 let ctx;
@@ -84,12 +101,12 @@ let lockStartTime = 0;
 let explosions = [];
 let hitFlashes = [];
 let gameOver = false;
-let score = 0;  // Track player's score
-let highScores = JSON.parse(localStorage.getItem('highScores')) || [];  // Load high scores from storage
-let isEnteringName = true;   // Start with name entry
-let playerName = '';          // Current player name
-let gameStarted = false;     // Track if game has started
-let nameBlinkTimer = 0;       // For blinking cursor effect
+let score = 0;
+let highScores = [];  // Initialize empty array
+let isEnteringName = true;
+let playerName = '';
+let gameStarted = false;
+let powerups = [];
 
 let player = {
     x: 50,
@@ -109,48 +126,232 @@ let player = {
     hitTime: 0
 };
 
-// Initialize the game
-function init() {
-    canvas = document.getElementById('gameCanvas');
-    ctx = canvas.getContext('2d');
-    
-    // Set canvas size
-    canvas.width = CANVAS_WIDTH;
-    canvas.height = CANVAS_HEIGHT;
-    
-    // Add event listeners
-    setupControls();
-    
-    // Start the game loop
-    gameLoop();
+// High Score Service - Abstraction for score management
+const HighScoreService = {
+    // Current storage type ('local' or 'server')
+    storageType: 'local',
+
+    // Initialize the service
+    async init() {
+        if (this.storageType === 'server') {
+            try {
+                // In the future, this will check server connection
+                // await this.testServerConnection();
+                console.log('Server high score system initialized');
+            } catch (e) {
+                console.error('Failed to connect to server, falling back to local storage');
+                this.storageType = 'local';
+            }
+        }
+    },
+
+    // Load high scores
+    async loadHighScores() {
+        if (this.storageType === 'server') {
+            try {
+                // In the future, this will be a server API call
+                // const response = await fetch('/api/highscores');
+                // return await response.json();
+                return [];
+            } catch (e) {
+                console.error('Error loading scores from server:', e);
+                return [];
+            }
+        } else {
+            // Local storage implementation
+            try {
+                const savedScores = localStorage.getItem('highScores');
+                if (!savedScores) return [];
+                
+                const parsed = JSON.parse(savedScores);
+                if (!Array.isArray(parsed)) return [];
+                
+                return parsed
+                    .filter(entry => (
+                        entry && 
+                        typeof entry.name === 'string' &&
+                        typeof entry.score === 'number' &&
+                        entry.score >= 0
+                    ))
+                    .map(entry => ({
+                        name: entry.name.trim().slice(0, NAME_MAX_LENGTH),
+                        score: Math.floor(entry.score),
+                        timestamp: entry.timestamp || Date.now()
+                    }));
+            } catch (e) {
+                console.error('Error loading local scores:', e);
+                return [];
+            }
+        }
+    },
+
+    // Save high scores
+    async saveHighScore(name, score) {
+        if (!name || typeof score !== 'number') return false;
+
+        const newScore = {
+            name: name.trim(),
+            score: Math.floor(score),
+            timestamp: Date.now()
+        };
+
+        try {
+            if (this.storageType === 'server') {
+                // In the future, this will be a server API call
+                // await fetch('/api/highscores', {
+                //     method: 'POST',
+                //     headers: { 'Content-Type': 'application/json' },
+                //     body: JSON.stringify(newScore)
+                // });
+                return true;
+            } else {
+                // Get current scores
+                let scores = await this.loadHighScores();
+                
+                // Add new score
+                scores.push(newScore);
+                
+                // Sort by score (desc) and timestamp (asc)
+                scores.sort((a, b) => {
+                    if (b.score !== a.score) {
+                        return b.score - a.score;
+                    }
+                    return a.timestamp - b.timestamp;
+                });
+                
+                // Keep only top scores and ensure no duplicates
+                scores = scores
+                    .filter((score, index, self) => 
+                        index === self.findIndex(s => 
+                            s.name === score.name && 
+                            s.score === score.score
+                        )
+                    )
+                    .slice(0, MAX_HIGH_SCORES);
+                
+                // Save to localStorage
+                localStorage.setItem('highScores', JSON.stringify(scores));
+                return true;
+            }
+        } catch (e) {
+            console.error('Error saving high score:', e);
+            return false;
+        }
+    },
+
+    // Clear high scores (for testing/admin purposes)
+    async clearHighScores() {
+        if (this.storageType === 'server') {
+            // In the future, this will be a server API call with admin authentication
+            // await fetch('/api/highscores', { method: 'DELETE' });
+        } else {
+            localStorage.removeItem('highScores');
+        }
+    }
+};
+
+// Modify the game's high score handling functions
+async function loadHighScores() {
+    highScores = await HighScoreService.loadHighScores();
 }
 
-// Setup keyboard and mouse controls
+async function addHighScore(name, score) {
+    if (await HighScoreService.saveHighScore(name, score)) {
+        // Reload scores to get updated list
+        await loadHighScores();
+    }
+}
+
+// Modify init function to add error handling
+async function init() {
+    try {
+        canvas = document.getElementById('gameCanvas');
+        if (!canvas) {
+            throw new Error('Canvas element not found');
+        }
+        
+        ctx = canvas.getContext('2d');
+        if (!ctx) {
+            throw new Error('Could not get canvas context');
+        }
+        
+        // Set canvas size
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        
+        // Initialize high score service and load scores
+        await HighScoreService.init();
+        await loadHighScores();
+        
+        // Add event listeners
+        setupControls();
+        
+        // Hide cursor during gameplay, show during name entry
+        updateCursorVisibility();
+        
+        // Start the game loop
+        gameLoop();
+    } catch (error) {
+        console.error('Failed to initialize game:', error);
+        // Display error message on canvas if possible
+        if (ctx) {
+            ctx.fillStyle = '#FF0000';
+            ctx.font = '24px Arial';
+            ctx.fillText('Failed to initialize game. Please refresh.', 50, 50);
+        }
+    }
+}
+
+// Add cleanup function for event listeners
+const eventListeners = {
+    keydown: null,
+    keyup: null,
+    mousemove: null,
+    mousedown: null,
+    mouseup: null,
+    contextmenu: null,
+    mouseleave: null
+};
+
+// Modify setupControls to store event listener references
 function setupControls() {
+    // Remove existing event listeners if they exist
+    if (eventListeners.keydown) {
+        window.removeEventListener('keydown', eventListeners.keydown);
+        window.removeEventListener('keyup', eventListeners.keyup);
+        canvas.removeEventListener('mousemove', eventListeners.mousemove);
+        canvas.removeEventListener('mousedown', eventListeners.mousedown);
+        canvas.removeEventListener('mouseup', eventListeners.mouseup);
+        canvas.removeEventListener('contextmenu', eventListeners.contextmenu);
+        canvas.removeEventListener('mouseleave', eventListeners.mouseleave);
+    }
+
     // Keyboard controls
-    window.addEventListener('keydown', (e) => {
+    eventListeners.keydown = (e) => {
         if (isEnteringName) {
             handleNameEntry(e.key);
             e.preventDefault();  // Prevent scrolling with spacebar
         } else if (gameOver && e.key.toLowerCase() === 'r') {
             resetGame();
+        } else if (e.key.toLowerCase() === 'r' && e.shiftKey) {
+            clearHighScores();
         } else {
             updateMovement(e.key, true);
         }
-    });
+    };
     
-    window.addEventListener('keyup', (e) => {
+    eventListeners.keyup = (e) => {
         updateMovement(e.key, false);
-    });
+    };
     
     // Mouse controls
-    canvas.addEventListener('mousemove', (e) => {
+    eventListeners.mousemove = (e) => {
         const rect = canvas.getBoundingClientRect();
         mouse.x = e.clientX - rect.left;
         mouse.y = e.clientY - rect.top;
-    });
+    };
     
-    canvas.addEventListener('mousedown', (e) => {
+    eventListeners.mousedown = (e) => {
         if (e.button === 0) { // Left click
             isMouseDown = true;
             fireCannon(); // Fire immediately when pressed
@@ -158,23 +359,30 @@ function setupControls() {
             fireMissile(lockOnTarget);
             player.missiles--;
         }
-    });
+    };
     
-    canvas.addEventListener('mouseup', (e) => {
+    eventListeners.mouseup = (e) => {
         if (e.button === 0) {
             isMouseDown = false;
         }
-    });
+    };
     
-    // Prevent context menu on right click
-    canvas.addEventListener('contextmenu', (e) => {
+    eventListeners.contextmenu = (e) => {
         e.preventDefault();
-    });
+    };
     
-    // Handle mouse leaving the canvas
-    canvas.addEventListener('mouseleave', () => {
+    eventListeners.mouseleave = () => {
         isMouseDown = false;
-    });
+    };
+
+    // Add event listeners
+    window.addEventListener('keydown', eventListeners.keydown);
+    window.addEventListener('keyup', eventListeners.keyup);
+    canvas.addEventListener('mousemove', eventListeners.mousemove);
+    canvas.addEventListener('mousedown', eventListeners.mousedown);
+    canvas.addEventListener('mouseup', eventListeners.mouseup);
+    canvas.addEventListener('contextmenu', eventListeners.contextmenu);
+    canvas.addEventListener('mouseleave', eventListeners.mouseleave);
 }
 
 // Update player movement state
@@ -361,10 +569,25 @@ function update() {
 
     // Check for game over condition
     if (player.health <= 0) {
-        gameOver = true;
-        if (score > 0) {  // Only add score if greater than 0
-            addHighScore(playerName, score);  // Automatically add score
+        // Create large player explosion
+        createExplosion(player.x + player.width/2, player.y + player.height/2);
+        // Create additional explosions around the player for bigger effect
+        for (let i = 0; i < 3; i++) {
+            setTimeout(() => {
+                createExplosion(
+                    player.x + player.width/2 + (Math.random() * 40 - 20),
+                    player.y + player.height/2 + (Math.random() * 40 - 20)
+                );
+            }, i * 100);
         }
+        // Wait for all explosions to complete before showing game over
+        setTimeout(() => {
+            gameOver = true;
+            if (score > 0) {
+                addHighScore(playerName, score);
+            }
+        }, EXPLOSION_DURATION + 300); // Wait for main explosion + delayed explosions
+        player.health = 0; // Ensure health shows as 0
         return;
     }
 
@@ -444,8 +667,11 @@ function update() {
                 enemy.health -= COLLISION_DAMAGE;
                 createHitFlash(enemy);
                 if (enemy.health <= 0) {
-                    score += SCORE_BASIC_ENEMY;  // Add score for destroying enemy ship
+                    score += SCORE_BASIC_ENEMY;
                     createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+                    if (Math.random() < POWERUP_SPAWN_CHANCE) {
+                        spawnPowerup(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+                    }
                 }
                 hasHit = true;
             }
@@ -459,7 +685,7 @@ function update() {
                 plane.health -= COLLISION_DAMAGE;
                 createHitFlash(plane);
                 if (plane.health <= 0) {
-                    score += SCORE_BASIC_ENEMY;  // Add score for destroying aircraft
+                    score += SCORE_BASIC_ENEMY;
                     createExplosion(plane.x + plane.width/2, plane.y + plane.height/2);
                 }
                 hasHit = true;
@@ -547,6 +773,9 @@ function update() {
             player.health -= COLLISION_DAMAGE;
             createHitFlash(player);
             createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+            if (Math.random() < POWERUP_SPAWN_CHANCE) {
+                spawnPowerup(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+            }
             return false;
         }
         
@@ -659,6 +888,47 @@ function update() {
         flash.duration -= 16;
         return flash.duration > 0;
     });
+
+    // Update powerups
+    powerups = powerups.filter(powerup => {
+        // Move powerup left and down (increased speed from 0.5 to 2.0)
+        powerup.x -= 2.0;
+        powerup.y += 0.3;
+        
+        // Add gentle bobbing effect
+        powerup.y += Math.sin(Date.now() / 300) * 0.3;
+        
+        // Check collision with player
+        if (checkCircleRectCollision(
+            { x: powerup.x, y: powerup.y, radius: powerup.size/2 },
+            player
+        )) {
+            // Apply powerup effect
+            if (powerup.type === POWERUP_TYPES.HEALTH) {
+                player.health = Math.min(100, player.health + HEALTH_POWERUP_AMOUNT);
+            } else {
+                player.missiles = Math.min(MISSILE_MAX_COUNT, player.missiles + MISSILE_POWERUP_AMOUNT);
+            }
+            return false;
+        }
+        
+        // Remove if off screen (check left boundary)
+        return powerup.x > 0 && powerup.y < CANVAS_HEIGHT;
+    });
+
+    // Limit array sizes
+    if (projectiles.length > MAX_PROJECTILES) {
+        projectiles = projectiles.slice(-MAX_PROJECTILES);
+    }
+    if (enemyProjectiles.length > MAX_ENEMY_PROJECTILES) {
+        enemyProjectiles = enemyProjectiles.slice(-MAX_ENEMY_PROJECTILES);
+    }
+    if (explosions.length > MAX_EXPLOSIONS) {
+        explosions = explosions.slice(-MAX_EXPLOSIONS);
+    }
+    if (hitFlashes.length > MAX_HIT_FLASHES) {
+        hitFlashes = hitFlashes.slice(-MAX_HIT_FLASHES);
+    }
 }
 
 // Check if target is under crosshair
@@ -792,7 +1062,16 @@ function drawAircraft() {
     aircraft.forEach(plane => {
         const isFlashing = hitFlashes.some(flash => flash.target === plane);
         ctx.fillStyle = isFlashing ? '#FFFFFF' : AIRCRAFT_COLOR;
-        ctx.fillRect(plane.x, plane.y, plane.width, plane.height);
+        
+        // Draw triangle instead of rectangle
+        ctx.beginPath();
+        // Point facing left (nose)
+        ctx.moveTo(plane.x, plane.y + plane.height/2);
+        // Right side points (back of aircraft)
+        ctx.lineTo(plane.x + plane.width, plane.y);  // Top point
+        ctx.lineTo(plane.x + plane.width, plane.y + plane.height);  // Bottom point
+        ctx.closePath();
+        ctx.fill();
     });
 }
 
@@ -824,7 +1103,9 @@ function draw() {
     drawAircraft();
     
     // Draw aim line
-    drawAimLine();
+    if (!gameOver) {
+        drawAimLine();
+    }
     
     // Draw projectiles
     drawProjectiles();
@@ -832,15 +1113,12 @@ function draw() {
     // Draw missiles
     drawMissiles();
     
-    // Draw player with hit flash effect
-    const isPlayerFlashing = hitFlashes.some(flash => flash.target === player);
-    ctx.fillStyle = isPlayerFlashing ? '#FFFFFF' : '#00FF00';
-    ctx.beginPath();
-    ctx.moveTo(player.x + player.width, player.y + player.height/2);
-    ctx.lineTo(player.x, player.y);
-    ctx.lineTo(player.x, player.y + player.height);
-    ctx.closePath();
-    ctx.fill();
+    // Draw player with hit flash effect (only if health > 0)
+    if (player.health > 0) {
+        const isPlayerFlashing = hitFlashes.some(flash => flash.target === player);
+        ctx.fillStyle = isPlayerFlashing ? '#FFFFFF' : '#00FF00';
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+    }
     
     // Draw explosions
     explosions.forEach(particles => {
@@ -851,6 +1129,29 @@ function draw() {
             ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
             ctx.fill();
         });
+    });
+    
+    // Draw powerups
+    powerups.forEach(powerup => {
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, powerup.size/2, 0, Math.PI * 2);
+        ctx.fillStyle = powerup.type === POWERUP_TYPES.HEALTH ? '#00FF00' : '#00FFFF';
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        // Draw plus symbol inside
+        ctx.beginPath();
+        ctx.moveTo(powerup.x - powerup.size/4, powerup.y);
+        ctx.lineTo(powerup.x + powerup.size/4, powerup.y);
+        if (powerup.type === POWERUP_TYPES.HEALTH) {
+            ctx.moveTo(powerup.x, powerup.y - powerup.size/4);
+            ctx.lineTo(powerup.x, powerup.y + powerup.size/4);
+        }
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
     });
     
     // Draw UI elements
@@ -897,16 +1198,15 @@ function drawNameEntry() {
     ctx.fillStyle = AIR_COLOR;
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
-    // Draw title
-    ctx.fillStyle = '#FFFFFF';
+    // Title
+    ctx.fillStyle = 'white';
     ctx.font = '48px Arial';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('BATTLESHIPS', CANVAS_WIDTH/2, CANVAS_HEIGHT/4);
+    ctx.fillText('Battleships', canvas.width/2, canvas.height/4);
     
-    // Draw name entry interface
-    ctx.font = '30px Arial';
-    ctx.fillText('Enter Your Name:', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    // Name entry
+    ctx.font = '24px Arial';
+    ctx.fillText('Enter your name:', canvas.width/2, canvas.height/2 - 40);
     
     // Draw name entry box
     const boxWidth = 300;
@@ -927,8 +1227,28 @@ function drawNameEntry() {
     ctx.font = '48px "Courier New"';  // Monospace font for arcade feel
     ctx.fillText(displayName.padEnd(NAME_MAX_LENGTH, '.'), CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
     
-    ctx.font = '20px Arial';
-    ctx.fillText('Use A-Z and 0-9 • Press ENTER to Start', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 90);
+    // How to play instructions
+    ctx.font = '16px Arial';
+    const instructions = [
+        'How to Play:',
+        '- WASD keys to move your ship',
+        '- Left click to fire cannons',
+        '- Right click to launch missiles at aircraft (or ships)',
+        '- Mouse to aim',
+        '- Collect powerups for health (green) and missiles (blue)',
+        '',
+        'Press ENTER to start'
+    ];
+    
+    // Start drawing instructions lower on the screen, after the name entry box
+    const instructionsStartY = CANVAS_HEIGHT/2 + 120;
+    instructions.forEach((line, index) => {
+        ctx.fillText(line, canvas.width/2, instructionsStartY + (index * 25));
+    });
+    
+    // Version and copyright
+    ctx.font = '12px Arial';
+    ctx.fillText('© 2025 Klemens Ehret', canvas.width/2, canvas.height - 20);
 }
 
 // Draw game over screen
@@ -955,20 +1275,30 @@ function drawGameOver() {
     const startX = CANVAS_WIDTH/2 - scoreAreaWidth/2;
     const scoreX = CANVAS_WIDTH/2 + scoreAreaWidth/2;
     
-    highScores.slice(0, MAX_HIGH_SCORES).forEach((entry, index) => {
-        const y = CANVAS_HEIGHT/2 + 30 + (index * 30);
-        // Draw rank and name (left-aligned)
-        ctx.textAlign = 'left';
-        ctx.fillText(`${index + 1}. ${entry.name}`, startX, y);
-        
-        // Draw score (right-aligned)
-        ctx.textAlign = 'right';
-        ctx.fillText(entry.score.toString().padStart(6, '0'), scoreX, y);
-    });
+    if (highScores.length === 0) {
+        ctx.textAlign = 'center';
+        ctx.fillText('No High Scores Yet', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    } else {
+        highScores.forEach((entry, index) => {
+            const y = CANVAS_HEIGHT/2 + 30 + (index * 30);
+            // Draw rank and name (left-aligned)
+            ctx.textAlign = 'left';
+            ctx.fillText(`${index + 1}. ${entry.name}`, startX, y);
+            
+            // Draw score (right-aligned)
+            ctx.textAlign = 'right';
+            ctx.fillText(entry.score.toString().padStart(6, '0'), scoreX, y);
+        });
+    }
     
     ctx.textAlign = 'center';  // Reset alignment for the restart text
     ctx.font = '20px Arial';
     ctx.fillText('Press R to Restart', CANVAS_WIDTH/2, CANVAS_HEIGHT - 40);
+}
+
+// Update cursor visibility based on game state
+function updateCursorVisibility() {
+    canvas.style.cursor = isEnteringName ? 'default' : 'none';
 }
 
 // Handle name entry for high score
@@ -979,6 +1309,7 @@ function handleNameEntry(key) {
         if (playerName.length > 0) {
             isEnteringName = false;  // Exit name entry mode
             gameStarted = true;      // Start the game
+            updateCursorVisibility(); // Hide cursor when game starts
         }
     } else if (key === 'Backspace') {
         playerName = playerName.slice(0, -1);
@@ -991,34 +1322,21 @@ function handleNameEntry(key) {
     }
 }
 
-// Add score to high scores
-function addHighScore(name, score) {
-    highScores.push({ name, score });
-    highScores.sort((a, b) => b.score - a.score);  // Sort by score descending
-    highScores = highScores.slice(0, MAX_HIGH_SCORES);  // Keep only top scores
-    localStorage.setItem('highScores', JSON.stringify(highScores));  // Save to storage
+// Add powerup spawn function
+function spawnPowerup(x, y) {
+    powerups.push({
+        x,
+        y,
+        type: Math.random() < 0.5 ? POWERUP_TYPES.HEALTH : POWERUP_TYPES.MISSILES,
+        size: POWERUP_SIZE
+    });
 }
 
-// Reset game state
-function resetGame() {
-    player.health = 100;
-    player.missiles = MISSILE_MAX_COUNT;
-    player.x = 50;
-    player.y = CANVAS_HEIGHT * 2/3;
-    
-    projectiles = [];
-    enemyProjectiles = [];
-    enemies = [];
-    aircraft = [];
-    missiles = [];
-    explosions = [];
-    hitFlashes = [];
-    score = 0;  // Reset score
-    
-    isEnteringName = true;  // Go back to name entry
-    playerName = '';        // Clear the name
-    gameStarted = false;    // Reset game started flag
-    gameOver = false;
+// Add clear high scores function
+function clearHighScores() {
+    highScores = [];
+    localStorage.removeItem('highScores');
+    console.log('High scores cleared');
 }
 
 // Main game loop
@@ -1056,4 +1374,45 @@ function createHitFlash(target) {
         target,
         duration: HIT_FLASH_DURATION
     });
+}
+
+// Modify resetGame to properly clean up
+async function resetGame() {
+    try {
+        // Reset player state
+        player.health = 100;
+        player.missiles = MISSILE_MAX_COUNT;
+        player.x = 50;
+        player.y = CANVAS_HEIGHT * 2/3;
+        
+        // Clear all arrays
+        projectiles = [];
+        enemyProjectiles = [];
+        enemies = [];
+        aircraft = [];
+        missiles = [];
+        explosions = [];
+        hitFlashes = [];
+        powerups = [];
+        score = 0;
+        
+        // Reset game state
+        gameOver = false;
+        isEnteringName = true;
+        playerName = '';
+        gameStarted = false;
+        
+        // Reload high scores
+        await loadHighScores();
+        
+        updateCursorVisibility();
+    } catch (error) {
+        console.error('Failed to reset game:', error);
+        // Display error message on canvas
+        if (ctx) {
+            ctx.fillStyle = '#FF0000';
+            ctx.font = '24px Arial';
+            ctx.fillText('Failed to reset game. Please refresh.', 50, 50);
+        }
+    }
 } 

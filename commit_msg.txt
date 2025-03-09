@@ -1,0 +1,14 @@
+[Cursor] Version 0.2.0 - Combat Balance and Visual Improvements
+
+Major changes:
+- Fixed aircraft visuals: triangular shape now points in the correct direction
+- Balanced combat mechanics:
+  - Increased enemy ship health to 60 (from 45)
+  - Ships now require 2 missiles to destroy (50 damage each)
+  - Aircraft remain more fragile (20 health)
+  - Consistent cannon damage (10 per hit)
+
+Minor improvements:
+- Enhanced visual feedback for hits and explosions
+- Improved game balance and progression
+- Code cleanup and optimization 

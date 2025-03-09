@@ -3,28 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Naval Warfare</title>
+    <title>Battleships</title>
     <style>
         body {
             margin: 0;
-            padding: 20px;
+            padding: 0;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background-color: #1a1a1a;
-            overflow: hidden;
+            background-color: #000;
         }
         canvas {
             border: 2px solid #333;
-            max-width: 100%;
-            max-height: 100vh;
-            cursor: none; /* Hide the default cursor */
+        }
+        #legal-links {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+        }
+        #legal-links a {
+            color: #4CAF50;
+            text-decoration: none;
+            margin-left: 10px;
+        }
+        #legal-links a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
+    <div id="legal-links">
+        <a href="privacy.html" target="_blank">Privacy Policy</a>
+        <a href="terms.html" target="_blank">Terms of Service</a>
+    </div>
     <script src="src/js/game.js"></script>
 </body>
 </html> 
