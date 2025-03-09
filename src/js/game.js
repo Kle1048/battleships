@@ -322,30 +322,29 @@ function resizeCanvas() {
         
         let newWidth, newHeight;
         
-        if (containerWidth > containerHeight) {
-            if (containerHeight * aspectRatio <= containerWidth) {
-                newHeight = containerHeight;
-                newWidth = containerHeight * aspectRatio;
-            } else {
-                newWidth = containerWidth;
-                newHeight = containerWidth / aspectRatio;
-            }
-            
-            console.log('New canvas dimensions:', {
-                width: newWidth,
-                height: newHeight
-            });
-            
-            // Set canvas size
-            canvas.style.width = `${newWidth}px`;
-            canvas.style.height = `${newHeight}px`;
-            canvas.width = CANVAS_WIDTH;
-            canvas.height = CANVAS_HEIGHT;
-            
-            // Update touch control positions
-            if (TOUCH_CONTROLS.enabled) {
-                setupTouchControls();
-            }
+        // Calculate new dimensions to fit the screen while maintaining aspect ratio
+        if (containerHeight * aspectRatio <= containerWidth) {
+            newHeight = containerHeight;
+            newWidth = containerHeight * aspectRatio;
+        } else {
+            newWidth = containerWidth;
+            newHeight = containerWidth / aspectRatio;
+        }
+        
+        console.log('New canvas dimensions:', {
+            width: newWidth,
+            height: newHeight
+        });
+        
+        // Set canvas size
+        canvas.style.width = `${newWidth}px`;
+        canvas.style.height = `${newHeight}px`;
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        
+        // Update touch control positions
+        if (TOUCH_CONTROLS.enabled) {
+            setupTouchControls();
         }
     } catch (error) {
         console.error('Error in resizeCanvas:', error);
