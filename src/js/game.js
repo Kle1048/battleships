@@ -217,77 +217,139 @@ let targetingAngle = 0; // Angle in radians, 0 points right
 const TARGETING_SPEED = 0.05; // Speed of targeting vector rotation
 const TARGETING_LENGTH = CANVAS_WIDTH; // Maximum length of targeting vector
 
+// Add error display function after the constants
+function showError(error) {
+    console.error('Game Error:', error);
+    
+    // Create or get error display element
+    let errorDisplay = document.getElementById('errorDisplay');
+    if (!errorDisplay) {
+        errorDisplay = document.createElement('div');
+        errorDisplay.id = 'errorDisplay';
+        errorDisplay.style.position = 'fixed';
+        errorDisplay.style.top = '10px';
+        errorDisplay.style.left = '10px';
+        errorDisplay.style.right = '10px';
+        errorDisplay.style.padding = '10px';
+        errorDisplay.style.background = 'rgba(255, 0, 0, 0.8)';
+        errorDisplay.style.color = 'white';
+        errorDisplay.style.fontFamily = 'Arial, sans-serif';
+        errorDisplay.style.fontSize = '14px';
+        errorDisplay.style.zIndex = '2000';
+        errorDisplay.style.whiteSpace = 'pre-wrap';
+        document.body.appendChild(errorDisplay);
+    }
+    
+    // Add timestamp and error details
+    const timestamp = new Date().toISOString();
+    errorDisplay.textContent = `${timestamp}\n${error.toString()}\n\n${errorDisplay.textContent || ''}`;
+}
+
 // Initialize the game
 async function init() {
     try {
+        // Log initialization start
+        console.log('Initializing game...');
+        console.log('Window dimensions:', window.innerWidth, 'x', window.innerHeight);
+        console.log('Device pixel ratio:', window.devicePixelRatio);
+        
         canvas = document.getElementById('gameCanvas');
         if (!canvas) {
             throw new Error('Canvas element not found');
         }
+        console.log('Canvas found');
         
         ctx = canvas.getContext('2d');
         if (!ctx) {
             throw new Error('Could not get canvas context');
         }
+        console.log('Canvas context obtained');
         
         // Check if device supports touch
         TOUCH_CONTROLS.enabled = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         VIRTUAL_KEYBOARD.enabled = TOUCH_CONTROLS.enabled;
+        console.log('Touch enabled:', TOUCH_CONTROLS.enabled);
+        console.log('Max touch points:', navigator.maxTouchPoints);
         
         // Make canvas responsive
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
+        console.log('Canvas resized');
         
         // Initialize high score service and load scores
         await HighScoreService.init();
         await loadHighScores();
+        console.log('High scores loaded');
         
         // Add event listeners
         setupControls();
+        console.log('Controls set up');
         
         // Hide cursor during gameplay, show during name entry
         updateCursorVisibility();
+        console.log('Cursor visibility updated');
         
         // Start the game loop
+        console.log('Starting game loop');
         gameLoop();
     } catch (error) {
         console.error('Failed to initialize game:', error);
+        showError(error);
+        
         if (ctx) {
             ctx.fillStyle = '#FF0000';
             ctx.font = '24px Arial';
             ctx.fillText('Failed to initialize game. Please refresh.', 50, 50);
+            ctx.font = '16px Arial';
+            ctx.fillText(error.toString(), 50, 80);
         }
     }
 }
 
 // Update resizeCanvas function
 function resizeCanvas() {
-    const containerWidth = window.innerWidth;
-    const containerHeight = window.innerHeight;
-    const aspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
-    
-    let newWidth, newHeight;
-    
-    // Only handle landscape mode
-    if (containerWidth > containerHeight) {
-        if (containerHeight * aspectRatio <= containerWidth) {
-            newHeight = containerHeight;
-            newWidth = containerHeight * aspectRatio;
-        } else {
-            newWidth = containerWidth;
-            newHeight = containerWidth / aspectRatio;
-        }
+    try {
+        const containerWidth = window.innerWidth;
+        const containerHeight = window.innerHeight;
+        const aspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
         
-        // Set canvas size
-        canvas.style.width = `${newWidth}px`;
-        canvas.style.height = `${newHeight}px`;
-        canvas.width = CANVAS_WIDTH;
-        canvas.height = CANVAS_HEIGHT;
+        console.log('Resizing canvas...', {
+            containerWidth,
+            containerHeight,
+            aspectRatio,
+            devicePixelRatio: window.devicePixelRatio
+        });
         
-        // Update touch control positions
-        if (TOUCH_CONTROLS.enabled) {
-            setupTouchControls();
+        let newWidth, newHeight;
+        
+        if (containerWidth > containerHeight) {
+            if (containerHeight * aspectRatio <= containerWidth) {
+                newHeight = containerHeight;
+                newWidth = containerHeight * aspectRatio;
+            } else {
+                newWidth = containerWidth;
+                newHeight = containerWidth / aspectRatio;
+            }
+            
+            console.log('New canvas dimensions:', {
+                width: newWidth,
+                height: newHeight
+            });
+            
+            // Set canvas size
+            canvas.style.width = `${newWidth}px`;
+            canvas.style.height = `${newHeight}px`;
+            canvas.width = CANVAS_WIDTH;
+            canvas.height = CANVAS_HEIGHT;
+            
+            // Update touch control positions
+            if (TOUCH_CONTROLS.enabled) {
+                setupTouchControls();
+            }
         }
+    } catch (error) {
+        console.error('Error in resizeCanvas:', error);
+        showError(error);
     }
 }
 
