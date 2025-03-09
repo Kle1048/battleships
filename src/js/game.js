@@ -1641,4 +1641,117 @@ function triggerHapticFeedback(duration = 50) {
     if (MOBILE_SETTINGS.hapticFeedback && window.navigator.vibrate) {
         window.navigator.vibrate(duration);
     }
+}
+
+// Add touch event handlers after handleTouchStart
+function handleTouchMove(e) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_WIDTH / rect.width;
+    const scaleY = CANVAS_HEIGHT / rect.height;
+    
+    Array.from(e.touches).forEach(touch => {
+        const x = (touch.clientX - rect.left) * scaleX;
+        const y = (touch.clientY - rect.top) * scaleY;
+        
+        // Update aim position if not pressing any buttons
+        if (!Object.values(touchControls).some(button => button.pressed)) {
+            mouse.x = x;
+            mouse.y = y;
+        }
+    });
+}
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    
+    // Reset all touch controls if no touches remain
+    if (e.touches.length === 0) {
+        Object.values(touchControls).forEach(button => {
+            button.pressed = false;
+        });
+        isMouseDown = false;
+    } else {
+        // Check remaining touches to maintain pressed states
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = CANVAS_WIDTH / rect.width;
+        const scaleY = CANVAS_HEIGHT / rect.height;
+        
+        // Reset all buttons first
+        Object.values(touchControls).forEach(button => {
+            button.pressed = false;
+        });
+        
+        // Check which buttons are still being pressed
+        Array.from(e.touches).forEach(touch => {
+            const x = (touch.clientX - rect.left) * scaleX;
+            const y = (touch.clientY - rect.top) * scaleY;
+            
+            Object.entries(touchControls).forEach(([key, button]) => {
+                if (x >= button.x && x <= button.x + button.width &&
+                    y >= button.y && y <= button.y + button.height) {
+                    button.pressed = true;
+                    if (key === 'fire') {
+                        isMouseDown = true;
+                    }
+                }
+            });
+        });
+    }
+}
+
+// Add touch controls drawing function
+function drawTouchControls() {
+    const size = TOUCH_CONTROLS.buttonSize;
+    
+    // Draw D-pad
+    Object.entries(touchControls).forEach(([key, button]) => {
+        // Choose color based on button type and state
+        let color;
+        if (key === 'fire') {
+            color = button.pressed ? TOUCH_CONTROLS.fireButtonActiveColor : TOUCH_CONTROLS.fireButtonColor;
+        } else if (key === 'missile') {
+            color = button.pressed ? TOUCH_CONTROLS.missileButtonActiveColor : TOUCH_CONTROLS.missileButtonColor;
+        } else {
+            color = button.pressed ? TOUCH_CONTROLS.buttonActiveColor : TOUCH_CONTROLS.buttonColor;
+        }
+        
+        // Draw button background
+        ctx.fillStyle = color;
+        ctx.fillRect(button.x, button.y, button.width, button.height);
+        
+        // Draw button border
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(button.x, button.y, button.width, button.height);
+        
+        // Draw button symbol
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const centerX = button.x + button.width/2;
+        const centerY = button.y + button.height/2;
+        
+        switch(key) {
+            case 'up':
+                ctx.fillText('↑', centerX, centerY);
+                break;
+            case 'down':
+                ctx.fillText('↓', centerX, centerY);
+                break;
+            case 'left':
+                ctx.fillText('←', centerX, centerY);
+                break;
+            case 'right':
+                ctx.fillText('→', centerX, centerY);
+                break;
+            case 'fire':
+                ctx.fillText('🔥', centerX, centerY);
+                break;
+            case 'missile':
+                ctx.fillText('🚀', centerX, centerY);
+                break;
+        }
+    });
 } 
