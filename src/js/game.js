@@ -1489,11 +1489,13 @@ function handleTouchStart(e) {
             handleVirtualKeyboardTouch(x, y);
             triggerHapticFeedback(25);
         } else {
-            // Existing touch control handling...
+            // Check if touch is on any control button
+            let touchedControl = false;
             Object.entries(touchControls).forEach(([key, button]) => {
                 if (x >= button.x && x <= button.x + button.width &&
                     y >= button.y && y <= button.y + button.height) {
                     button.pressed = true;
+                    touchedControl = true;
                     if (key === 'fire') {
                         isMouseDown = true;
                         triggerHapticFeedback(50);
@@ -1505,10 +1507,12 @@ function handleTouchStart(e) {
                 }
             });
             
-            // Update aim position for non-button touches
-            if (!Object.values(touchControls).some(button => button.pressed)) {
-                mouse.x = x;
-                mouse.y = y;
+            // Update aim position for non-button touches only if in front of the ship
+            if (!touchedControl) {
+                if (x > player.x + player.width) {  // Only if touch is to the right of the ship
+                    mouse.x = x;
+                    mouse.y = y;
+                }
             }
         }
     });
@@ -1654,8 +1658,8 @@ function handleTouchMove(e) {
         const x = (touch.clientX - rect.left) * scaleX;
         const y = (touch.clientY - rect.top) * scaleY;
         
-        // Update aim position if not pressing any buttons
-        if (!Object.values(touchControls).some(button => button.pressed)) {
+        // Update aim position if not pressing any buttons and touch is in front of ship
+        if (!Object.values(touchControls).some(button => button.pressed) && x > player.x + player.width) {
             mouse.x = x;
             mouse.y = y;
         }
