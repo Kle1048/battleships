@@ -36,6 +36,18 @@ const MISSILE_LOCK_TIME = 100; // 0.1 seconds for lock
 const MISSILE_TURN_SPEED = 10.0; // Ultra-extreme agility for guaranteed air target interception
 const MISSILE_MIN_DISTANCE = 5; // Minimum distance to consider a hit
 
+// Ship-to-Ship Missile (SSM) constants
+const SSM_SPEED = 8; // Slightly slower than regular missiles
+const SSM_SIZE = 10; // Larger than regular missiles
+const SSM_COLOR = '#FFA500'; // Orange color
+const SSM_DAMAGE = 80; // More damage than regular missiles
+const SSM_MAX_COUNT = 8; // Player has 8 SSMs
+const SSM_RADAR_ACTIVATION_TIME = 1000; // 1 second before radar activates
+const SSM_RADAR_ANGLE = Math.PI / 3; // 60 degrees radar cone
+const SSM_RADAR_RANGE = 400; // Radar detection range
+const SSM_TURN_SPEED = 4.0; // Less agile than regular missiles
+const SSM_MIN_DISTANCE = 5; // Minimum distance to consider a hit
+
 // Collision constants
 const COLLISION_DAMAGE = 10;
 
@@ -68,23 +80,50 @@ const NAME_MAX_LENGTH = 8;    // Increased from 3 to 8 characters for names
 // Add touch control constants after other constants
 const MOBILE_SETTINGS = {
     hapticFeedback: true,
-    buttonOpacity: 0.3,
-    activeButtonOpacity: 0.5,
+    buttonOpacity: 0.5,
+    activeButtonOpacity: 0.7,
     minimumTouchSize: 48, // Minimum 48x48px touch target
     doubleTapTimeout: 300 // ms between taps
 };
 
-// Update touch control constants
-const TOUCH_CONTROLS = {
+// Add joystick control constants
+const JOYSTICK_CONTROLS = {
     enabled: false,
-    buttonSize: Math.max(60, MOBILE_SETTINGS.minimumTouchSize),
-    buttonPadding: 10,
-    buttonColor: `rgba(255, 255, 255, ${MOBILE_SETTINGS.buttonOpacity})`,
-    buttonActiveColor: `rgba(255, 255, 255, ${MOBILE_SETTINGS.activeButtonOpacity})`,
-    fireButtonColor: `rgba(255, 0, 0, ${MOBILE_SETTINGS.buttonOpacity})`,
-    fireButtonActiveColor: `rgba(255, 0, 0, ${MOBILE_SETTINGS.activeButtonOpacity})`,
-    missileButtonColor: `rgba(0, 255, 255, ${MOBILE_SETTINGS.buttonOpacity})`,
-    missileButtonActiveColor: `rgba(0, 255, 255, ${MOBILE_SETTINGS.activeButtonOpacity})`
+    size: 120, // Increased size for better touch usability
+    movementThreshold: 0.1, // Lower threshold for better response
+    movementMaxForce: 0.75,  // Force value at which max speed is reached
+    movementMultiplier: 1.75, // Increased multiplier for better control
+    movementZone: {          // Movement joystick location information
+        x: 0,
+        y: 0,
+        diameter: 120, // Increased diameter
+        dynamicPosition: false
+    },
+    actionZone: {            // Action joystick location information  
+        x: 0,
+        y: 0,
+        diameter: 120, // Increased diameter
+        dynamicPosition: false
+    },
+    missileButton: {         // Missile button above movement joystick
+        x: 0,
+        y: 0,
+        size: 80, // Larger missile button
+        color: 'rgba(0, 255, 255, 0.7)', // More visible
+        activeColor: 'rgba(0, 255, 255, 0.9)' // More visible when active
+    },
+    ssmButton: {            // SSM button above missile button
+        x: 0,
+        y: 0,
+        size: 80, // Same size as missile button
+        color: 'rgba(255, 165, 0, 0.7)', // Orange
+        activeColor: 'rgba(255, 165, 0, 0.9)' // Brighter orange when active
+    },
+    styles: {
+        position: 'absolute',
+        zIndex: 100,
+        opacity: 0.85 // Increased opacity for better visibility
+    }
 };
 
 // Add virtual keyboard constants after touch controls
@@ -96,8 +135,8 @@ const VIRTUAL_KEYBOARD = {
         ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
         ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
     ],
-    keySize: 40,
-    padding: 5,
+    keySize: 60, // Larger key size for better touch targets
+    padding: 8,  // Increased padding between keys
     color: 'rgba(255, 255, 255, 0.3)',
     activeColor: 'rgba(255, 255, 255, 0.5)',
     textColor: '#FFFFFF'
@@ -170,7 +209,8 @@ let projectiles = [];
 let enemyProjectiles = [];
 let enemies = [];
 let aircraft = [];
-let missiles = [];
+let missiles = []; // Regular missiles
+let ssms = []; // Array to store Ship-to-Ship Missiles
 let missileCount = MISSILE_MAX_COUNT;
 let lockOnTarget = null;
 let lockStartTime = 0;
@@ -184,14 +224,18 @@ let playerName = '';          // Current player name
 let gameStarted = false;     // Track if game has started
 let nameBlinkTimer = 0;       // For blinking cursor effect
 
-// Add touch state tracking
-let touchControls = {
-    up: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
-    down: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
-    left: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
-    right: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
-    fire: { pressed: false, x: 0, y: 0, width: 0, height: 0 },
-    missile: { pressed: false, x: 0, y: 0, width: 0, height: 0 }
+// Add joystick variables
+let joysticks = {
+    movement: null,
+    action: null
+};
+
+let joystickState = {
+    movementDirection: { x: 0, y: 0 },
+    movementForce: 0,
+    aimDirection: { x: 0, y: 0 },
+    aimForce: 0,
+    firing: false
 };
 
 let player = {
@@ -208,6 +252,7 @@ let player = {
         right: false
     },
     missiles: MISSILE_MAX_COUNT,
+    ssms: SSM_MAX_COUNT, // Add SSM count to player
     isHit: false,
     hitTime: 0
 };
@@ -266,14 +311,23 @@ async function init() {
         console.log('Canvas context obtained');
         
         // Check if device supports touch
-        TOUCH_CONTROLS.enabled = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        VIRTUAL_KEYBOARD.enabled = TOUCH_CONTROLS.enabled;
-        console.log('Touch enabled:', TOUCH_CONTROLS.enabled);
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        // For mobile optimization, use joysticks
+        JOYSTICK_CONTROLS.enabled = isTouchDevice;
+        VIRTUAL_KEYBOARD.enabled = isTouchDevice;
+        
+        console.log('Touch enabled:', isTouchDevice);
+        console.log('Joysticks enabled:', JOYSTICK_CONTROLS.enabled);
         console.log('Max touch points:', navigator.maxTouchPoints);
         
         // Make canvas responsive
         resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            if (JOYSTICK_CONTROLS.enabled) {
+                setupJoysticks();
+            }
+        });
         console.log('Canvas resized');
         
         // Initialize high score service and load scores
@@ -281,8 +335,9 @@ async function init() {
         await loadHighScores();
         console.log('High scores loaded');
         
-        // Add event listeners
+        // Setup controls
         setupControls();
+        // Don't setup joysticks here - they'll be setup after name entry is complete
         console.log('Controls set up');
         
         // Hide cursor during gameplay, show during name entry
@@ -341,43 +396,260 @@ function resizeCanvas() {
         canvas.style.height = `${newHeight}px`;
         canvas.width = CANVAS_WIDTH;
         canvas.height = CANVAS_HEIGHT;
-        
-        // Update touch control positions
-        if (TOUCH_CONTROLS.enabled) {
-            setupTouchControls();
-        }
     } catch (error) {
         console.error('Error in resizeCanvas:', error);
         showError(error);
     }
 }
 
-// Add touch control setup
-function setupTouchControls() {
-    const size = TOUCH_CONTROLS.buttonSize;
-    const padding = TOUCH_CONTROLS.buttonPadding;
+// Setup joystick controls using nipplejs
+function setupJoysticks() {
+    // Don't setup joysticks during name entry or game over
+    if (isEnteringName || gameOver) {
+        return;
+    }
     
-    // D-pad on left side
-    touchControls.left.x = padding;
-    touchControls.left.y = CANVAS_HEIGHT - size * 2;
-    touchControls.right.x = padding + size * 2;
-    touchControls.right.y = CANVAS_HEIGHT - size * 2;
-    touchControls.up.x = padding + size;
-    touchControls.up.y = CANVAS_HEIGHT - size * 3;
-    touchControls.down.x = padding + size;
-    touchControls.down.y = CANVAS_HEIGHT - size;
+    console.log("Setting up joysticks");
     
-    // Action buttons on right side
-    touchControls.fire.x = CANVAS_WIDTH - padding - size * 2;
-    touchControls.fire.y = CANVAS_HEIGHT - size * 2;
-    touchControls.missile.x = CANVAS_WIDTH - padding - size;
-    touchControls.missile.y = CANVAS_HEIGHT - size * 3;
+    // Remove existing joysticks if any
+    if (joysticks.movement) {
+        joysticks.movement.destroy();
+        console.log("Destroyed existing movement joystick");
+    }
+    if (joysticks.action) {
+        joysticks.action.destroy();
+        console.log("Destroyed existing action joystick");
+    }
     
-    // Set sizes for all buttons
-    Object.values(touchControls).forEach(button => {
-        button.width = size;
-        button.height = size;
+    // Remove any existing joystick containers
+    const existingContainers = document.querySelectorAll('.joystick-container');
+    existingContainers.forEach(container => {
+        document.body.removeChild(container);
     });
+    
+    // Remove any existing missile button
+    const existingMissileBtn = document.getElementById('missileButton');
+    if (existingMissileBtn) {
+        document.body.removeChild(existingMissileBtn);
+        console.log("Removed existing missile button");
+    }
+    
+    // Remove any existing SSM button
+    const existingSsmBtn = document.getElementById('ssmButton');
+    if (existingSsmBtn) {
+        document.body.removeChild(existingSsmBtn);
+        console.log("Removed existing SSM button");
+    }
+
+    // Get window dimensions
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    console.log("Window dimensions:", windowWidth, "x", windowHeight);
+    
+    // Joystick dimensions
+    const joystickSize = JOYSTICK_CONTROLS.size;
+    const containerSize = joystickSize + 20; // Add some padding
+    
+    // Create container for left joystick (movement)
+    const leftContainer = document.createElement('div');
+    leftContainer.className = 'joystick-container';
+    leftContainer.id = 'movement-joystick-container';
+    leftContainer.style.position = 'fixed';
+    leftContainer.style.bottom = '20px';
+    leftContainer.style.left = '20px';
+    leftContainer.style.width = containerSize + 'px';
+    leftContainer.style.height = containerSize + 'px';
+    leftContainer.style.zIndex = '1000';
+    document.body.appendChild(leftContainer);
+    
+    // Create container for right joystick (action)
+    const rightContainer = document.createElement('div');
+    rightContainer.className = 'joystick-container';
+    rightContainer.id = 'action-joystick-container';
+    rightContainer.style.position = 'fixed';
+    rightContainer.style.bottom = '20px';
+    rightContainer.style.right = '20px';
+    rightContainer.style.width = containerSize + 'px';
+    rightContainer.style.height = containerSize + 'px';
+    rightContainer.style.zIndex = '1000';
+    document.body.appendChild(rightContainer);
+    
+    console.log("Created joystick containers");
+    
+    // Create SSM button
+    const ssmBtn = document.createElement('div');
+    ssmBtn.id = 'ssmButton';
+    ssmBtn.style.position = 'fixed';
+    ssmBtn.style.bottom = (containerSize + 40 + JOYSTICK_CONTROLS.missileButton.size + 20) + 'px'; // Position above missile button
+    ssmBtn.style.left = '20px';
+    ssmBtn.style.width = JOYSTICK_CONTROLS.ssmButton.size + 'px';
+    ssmBtn.style.height = JOYSTICK_CONTROLS.ssmButton.size + 'px';
+    ssmBtn.style.borderRadius = '50%';
+    ssmBtn.style.backgroundColor = JOYSTICK_CONTROLS.ssmButton.color;
+    ssmBtn.style.border = '2px solid white';
+    ssmBtn.style.display = 'flex';
+    ssmBtn.style.justifyContent = 'center';
+    ssmBtn.style.alignItems = 'center';
+    ssmBtn.style.fontSize = (JOYSTICK_CONTROLS.ssmButton.size * 0.5) + 'px';
+    ssmBtn.style.color = 'white';
+    ssmBtn.style.zIndex = '1000';
+    ssmBtn.style.userSelect = 'none';
+    ssmBtn.style.touchAction = 'none';
+    ssmBtn.innerHTML = '🚀➡️'; // Rocket followed by right arrow
+    document.body.appendChild(ssmBtn);
+    
+    // Create missile button
+    const missileBtn = document.createElement('div');
+    missileBtn.id = 'missileButton';
+    missileBtn.style.position = 'fixed';
+    missileBtn.style.bottom = (containerSize + 40) + 'px'; // Position above left joystick
+    missileBtn.style.left = '20px';
+    missileBtn.style.width = JOYSTICK_CONTROLS.missileButton.size + 'px';
+    missileBtn.style.height = JOYSTICK_CONTROLS.missileButton.size + 'px';
+    missileBtn.style.borderRadius = '50%';
+    missileBtn.style.backgroundColor = JOYSTICK_CONTROLS.missileButton.color;
+    missileBtn.style.border = '2px solid white';
+    missileBtn.style.display = 'flex';
+    missileBtn.style.justifyContent = 'center';
+    missileBtn.style.alignItems = 'center';
+    missileBtn.style.fontSize = (JOYSTICK_CONTROLS.missileButton.size * 0.5) + 'px';
+    missileBtn.style.color = 'white';
+    missileBtn.style.zIndex = '1000';
+    missileBtn.style.userSelect = 'none';
+    missileBtn.style.touchAction = 'none';
+    missileBtn.innerHTML = '🚀';
+    document.body.appendChild(missileBtn);
+    
+    // Create movement joystick in its container
+    console.log("Creating movement joystick within container");
+    joysticks.movement = nipplejs.create({
+        zone: document.getElementById('movement-joystick-container'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        size: joystickSize,
+        color: 'white',
+        lockX: false,
+        lockY: false
+    });
+    
+    // Create action joystick in its container
+    console.log("Creating action joystick within container");
+    joysticks.action = nipplejs.create({
+        zone: document.getElementById('action-joystick-container'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        size: joystickSize,
+        color: 'red',
+        lockX: false,
+        lockY: false
+    });
+    
+    // Add event listeners for the SSM button
+    ssmBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        ssmBtn.style.backgroundColor = JOYSTICK_CONTROLS.ssmButton.activeColor;
+        // Fire SSM if player has SSMs
+        if (player.ssms > 0) {
+            fireSSM();
+            player.ssms--;
+            // Add haptic feedback if available
+            if (navigator.vibrate && MOBILE_SETTINGS.hapticFeedback) {
+                navigator.vibrate(100);
+            }
+        }
+    });
+    
+    ssmBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        ssmBtn.style.backgroundColor = JOYSTICK_CONTROLS.ssmButton.color;
+    });
+    
+    // Add event listeners for the missile button
+    missileBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        missileBtn.style.backgroundColor = JOYSTICK_CONTROLS.missileButton.activeColor;
+        // Fire missile if there's a locked target and player has missiles
+        if (lockOnTarget && player.missiles > 0) {
+            fireMissile(lockOnTarget);
+            player.missiles--;
+            // Add haptic feedback if available
+            if (navigator.vibrate && MOBILE_SETTINGS.hapticFeedback) {
+                navigator.vibrate(100);
+            }
+        }
+    });
+    
+    missileBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        missileBtn.style.backgroundColor = JOYSTICK_CONTROLS.missileButton.color;
+    });
+    
+    // Set up event listeners for movement joystick
+    joysticks.movement.on('move', (evt, data) => {
+        const force = Math.min(data.force, 1.0);
+        joystickState.movementForce = force;
+        joystickState.movementDirection.x = data.vector.x;
+        joystickState.movementDirection.y = data.vector.y;
+        
+        // Update player movement based on joystick input
+        if (force >= JOYSTICK_CONTROLS.movementThreshold) {
+            player.moving.right = data.vector.x > 0;
+            player.moving.left = data.vector.x < 0;
+            // Swap up and down to fix inverted controls
+            player.moving.up = data.vector.y > 0; // Changed from < 0 to > 0
+            player.moving.down = data.vector.y < 0; // Changed from > 0 to < 0
+        }
+    });
+    
+    joysticks.movement.on('end', () => {
+        // Reset movement state when joystick is released
+        joystickState.movementForce = 0;
+        joystickState.movementDirection.x = 0;
+        joystickState.movementDirection.y = 0;
+        player.moving.up = false;
+        player.moving.down = false;
+        player.moving.left = false;
+        player.moving.right = false;
+    });
+    
+    // Set up event listeners for action/aiming joystick
+    joysticks.action.on('start', () => {
+        // Start firing immediately when joystick is touched
+        joystickState.firing = true;
+        isMouseDown = true;
+    });
+    
+    joysticks.action.on('move', (evt, data) => {
+        const force = Math.min(data.force, 1.0);
+        joystickState.aimForce = force;
+        joystickState.aimDirection.x = data.vector.x;
+        joystickState.aimDirection.y = data.vector.y;
+        
+        // Update mouse position for aiming
+        if (force >= JOYSTICK_CONTROLS.movementThreshold) {
+            // Calculate aim position based on player position and joystick direction
+            // Invert the y-axis for aiming to fix inverted controls
+            mouse.x = player.x + player.width + (CANVAS_WIDTH - player.x - player.width) * 0.5 * (data.vector.x + 1);
+            mouse.y = player.y + (-data.vector.y * CANVAS_HEIGHT * 0.5); // Added negative sign to invert Y
+            
+            // Make sure we are firing while aiming
+            if (!joystickState.firing) {
+                joystickState.firing = true;
+                isMouseDown = true;
+            }
+        }
+    });
+    
+    joysticks.action.on('end', () => {
+        // Reset aiming and firing state when joystick is released
+        joystickState.aimForce = 0;
+        joystickState.aimDirection.x = 0;
+        joystickState.aimDirection.y = 0;
+        joystickState.firing = false;
+        isMouseDown = false;
+    });
+    
+    console.log("Joystick setup complete");
 }
 
 // Update setupControls function
@@ -389,6 +661,10 @@ function setupControls() {
             e.preventDefault();  // Prevent scrolling with spacebar
         } else if (gameOver && e.key.toLowerCase() === 'r') {
             resetGame();
+        } else if (e.key === 'q' && player.ssms > 0) {
+            // 'Q' key to fire SSM
+            fireSSM();
+            player.ssms--;
         } else {
             updateMovement(e.key, true);
         }
@@ -429,6 +705,10 @@ function setupControls() {
         } else if (e.button === 2 && lockOnTarget && player.missiles > 0) { // Right click
             fireMissile(lockOnTarget);
             player.missiles--;
+        } else if (e.button === 1 && player.ssms > 0) { // Middle click for SSM
+            fireSSM();
+            player.ssms--;
+            e.preventDefault(); // Prevent default middle-click behavior
         }
     });
     
@@ -448,12 +728,11 @@ function setupControls() {
         isMouseDown = false;
     });
     
-    if (TOUCH_CONTROLS.enabled) {
-        canvas.addEventListener('touchstart', handleTouchStart);
-        canvas.addEventListener('touchmove', handleTouchMove);
-        canvas.addEventListener('touchend', handleTouchEnd);
-        canvas.addEventListener('touchcancel', handleTouchEnd);
-    }
+    // Touch controls for name entry and virtual keyboard
+    canvas.addEventListener('touchstart', handleTouchStart);
+    canvas.addEventListener('touchmove', handleTouchMove);
+    canvas.addEventListener('touchend', handleTouchEnd);
+    canvas.addEventListener('touchcancel', handleTouchEnd);
     
     // Add event listener for cursor visibility
     document.addEventListener('mouseover', () => {
@@ -527,8 +806,8 @@ function fireCannon() {
     projectiles.push({
         x: shipCenter.x,
         y: shipCenter.y,
-        dx: normalizedDx * CANNON_SPEED,
-        dy: normalizedDy * CANNON_SPEED,
+        vx: normalizedDx * CANNON_SPEED,
+        vy: normalizedDy * CANNON_SPEED,
         size: CANNON_SIZE
     });
     
@@ -578,6 +857,11 @@ function spawnEnemy() {
 // Enemy fires at player
 function enemyShoot(enemy) {
     const currentTime = Date.now();
+    if (!enemy.lastShotTime) {
+        enemy.lastShotTime = currentTime;
+        return;
+    }
+    
     if (currentTime - enemy.lastShotTime < ENEMY_SHOT_INTERVAL) return;
     
     const enemyCenter = {
@@ -597,8 +881,8 @@ function enemyShoot(enemy) {
     enemyProjectiles.push({
         x: enemyCenter.x,
         y: enemyCenter.y,
-        dx: normalizedDx * ENEMY_PROJECTILE_SPEED,
-        dy: normalizedDy * ENEMY_PROJECTILE_SPEED,
+        vx: normalizedDx * ENEMY_PROJECTILE_SPEED,
+        vy: normalizedDy * ENEMY_PROJECTILE_SPEED,
         size: CANNON_SIZE
     });
     
@@ -620,13 +904,18 @@ function spawnAircraft() {
         verticalSpeed: AIRCRAFT_VERTICAL_SPEED,
         health: AIRCRAFT_HEALTH,
         lastShotTime: 0,
-        movingDown: Math.random() < 0.5 // Random initial vertical direction
+        verticalDirection: Math.random() < 0.5 ? 1 : -1 // Random initial vertical direction (1 = down, -1 = up)
     });
 }
 
 // Aircraft fires at player
 function aircraftShoot(aircraft) {
     const currentTime = Date.now();
+    if (!aircraft.lastShotTime) {
+        aircraft.lastShotTime = currentTime;
+        return;
+    }
+    
     if (currentTime - aircraft.lastShotTime < AIRCRAFT_SHOT_INTERVAL) return;
     
     const aircraftCenter = {
@@ -646,8 +935,8 @@ function aircraftShoot(aircraft) {
     enemyProjectiles.push({
         x: aircraftCenter.x,
         y: aircraftCenter.y,
-        dx: normalizedDx * ENEMY_PROJECTILE_SPEED,
-        dy: normalizedDy * ENEMY_PROJECTILE_SPEED,
+        vx: normalizedDx * ENEMY_PROJECTILE_SPEED,
+        vy: normalizedDy * ENEMY_PROJECTILE_SPEED,
         size: CANNON_SIZE
     });
     
@@ -656,319 +945,479 @@ function aircraftShoot(aircraft) {
 
 // Update game state
 function update() {
-    if (isEnteringName) return;  // Don't update game if entering name
-    
-    if (gameOver) {
-        return;
-    }
-
-    // Check for game over condition
-    if (player.health <= 0) {
-        gameOver = true;
-        if (score > 0) {  // Only add score if greater than 0
-            addHighScore(playerName, score);  // Automatically add score
-        }
-        return;
-    }
-
-    // Store previous position for collision check
-    const prevY = player.y;
-    
-    // Update player position based on movement state
-    if (player.moving.up) {
-        const newY = player.y - player.speed;
-        // Only allow upward movement if we're not going too high above water
-        if (newY >= WATER_START - SHIP_FLOAT_HEIGHT) {
-            player.y = newY;
-        }
-    }
-    if (player.moving.down) {
-        const newY = player.y + player.speed;
-        // Check bottom boundary before moving
-        if (newY <= CANVAS_HEIGHT - player.height) {
-            player.y = newY;
-        }
-    }
-    if (player.moving.left) {
-        const newX = player.x - player.speed;
-        if (newX >= 0) {
-            player.x = newX;
-        }
-    }
-    if (player.moving.right) {
-        const newX = player.x + player.speed;
-        if (newX <= CANVAS_WIDTH - player.width) {
-            player.x = newX;
-        }
-    }
-    
-    // Remove redundant boundary checks since we're checking before moving
-    // Keep only the water line check as a safety
-    if (player.y < WATER_START - SHIP_FLOAT_HEIGHT) {
-        player.y = WATER_START - SHIP_FLOAT_HEIGHT;
-    }
-    
-    // Check if we should fire cannon (continuous fire when mouse is held)
-    if (isMouseDown) {
-        fireCannon();
-    }
-    
-    // Spawn enemies
-    const currentTime = Date.now();
-    if (currentTime - lastEnemySpawnTime > ENEMY_SPAWN_INTERVAL) {
-        spawnEnemy();
-        lastEnemySpawnTime = currentTime;
-    }
-    if (currentTime - lastAircraftSpawnTime > AIRCRAFT_SPAWN_INTERVAL) {
-        spawnAircraft();
-        lastAircraftSpawnTime = currentTime;
-    }
-    
-    // Update projectiles
-    projectiles = projectiles.filter(projectile => {
-        projectile.x += projectile.dx;
-        projectile.y += projectile.dy;
+    try {
+        // Don't update game if entering name
+        if (isEnteringName) return;
         
-        const isOnScreen = projectile.x >= 0 && 
-                         projectile.x <= CANVAS_WIDTH && 
-                         projectile.y >= 0 && 
-                         projectile.y <= CANVAS_HEIGHT;
+        // Don't update if game over
+        if (gameOver) {
+            return;
+        }
         
-        if (!isOnScreen) return false;
+        // Check for game over condition
+        if (player.health <= 0) {
+            gameOver = true;
+            if (score > 0) {  // Only add score if greater than 0
+                addHighScore(playerName, score);  // Automatically add score
+            }
+            return;
+        }
         
-        // Check collisions with enemies and aircraft
-        let hasHit = false;
+        // Handle continuous cannon fire if mouse is held down
+        if (isMouseDown) {
+            const currentTime = Date.now();
+            if (currentTime - lastShotTime >= CANNON_COOLDOWN) {
+                fireCannon();
+                lastShotTime = currentTime;
+            }
+        }
         
-        enemies.forEach(enemy => {
-            if (checkCircleRectCollision(
-                { x: projectile.x, y: projectile.y, radius: projectile.size },
-                enemy
-            )) {
-                enemy.health -= COLLISION_DAMAGE;
-                createHitFlash(enemy);
-                if (enemy.health <= 0) {
-                    score += SCORE_BASIC_ENEMY;  // Add score for destroying enemy ship
-                    createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+        // Calculate player movement speed
+        let moveSpeed = player.speed;
+        
+        // If joystick controls are enabled and active, adjust speed based on force
+        if (JOYSTICK_CONTROLS.enabled && joystickState.movementForce > 0) {
+            const speedFactor = Math.min(
+                1 + (JOYSTICK_CONTROLS.movementMultiplier - 1) * 
+                (joystickState.movementForce / JOYSTICK_CONTROLS.movementMaxForce),
+                JOYSTICK_CONTROLS.movementMultiplier
+            );
+            moveSpeed *= speedFactor;
+        }
+        
+        // Update player position based on movement flags
+        if (player.moving.up) {
+            // Limit upward movement based on SHIP_FLOAT_HEIGHT
+            const maxUpwardY = WATER_START - SHIP_FLOAT_HEIGHT;
+            player.y = Math.max(player.y - moveSpeed, maxUpwardY);
+        }
+        if (player.moving.down) {
+            // Limit downward movement to canvas bottom
+            player.y = Math.min(player.y + moveSpeed, CANVAS_HEIGHT - player.height);
+        }
+        if (player.moving.left) {
+            // Limit leftward movement to the left edge
+            player.x = Math.max(player.x - moveSpeed, 0);
+        }
+        if (player.moving.right) {
+            // Limit rightward movement to the right edge
+            player.x = Math.min(player.x + moveSpeed, CANVAS_WIDTH - player.width);
+        }
+        
+        // Update projectiles
+        for (let i = projectiles.length - 1; i >= 0; i--) {
+            projectiles[i].x += projectiles[i].vx;
+            projectiles[i].y += projectiles[i].vy;
+            
+            // Remove projectiles that go off screen
+            if (projectiles[i].x > CANVAS_WIDTH || 
+                projectiles[i].x < 0 || 
+                projectiles[i].y > CANVAS_HEIGHT || 
+                projectiles[i].y < 0) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+            
+            // Check for collisions with enemies
+            for (let j = enemies.length - 1; j >= 0; j--) {
+                if (checkCollision(
+                    {x: projectiles[i].x - CANNON_SIZE/2, y: projectiles[i].y - CANNON_SIZE/2, width: CANNON_SIZE, height: CANNON_SIZE},
+                    {x: enemies[j].x, y: enemies[j].y, width: enemies[j].width, height: enemies[j].height}
+                )) {
+                    enemies[j].health -= 10;
+                    createHitFlash(enemies[j]);
+                    
+                    // Check if enemy destroyed
+                    if (enemies[j].health <= 0) {
+                        // Add explosion
+                        createExplosion(enemies[j].x + enemies[j].width/2, enemies[j].y + enemies[j].height/2);
+                        
+                        // Remove enemy
+                        enemies.splice(j, 1);
+                        
+                        // Increment score
+                        score++;
+                    }
+                    
+                    // Remove projectile
+                    projectiles.splice(i, 1);
+                    break;
                 }
-                hasHit = true;
             }
-        });
-        
-        aircraft.forEach(plane => {
-            if (checkCircleRectCollision(
-                { x: projectile.x, y: projectile.y, radius: projectile.size },
-                plane
-            )) {
-                plane.health -= COLLISION_DAMAGE;
-                createHitFlash(plane);
-                if (plane.health <= 0) {
-                    score += SCORE_BASIC_ENEMY;  // Add score for destroying aircraft
-                    createExplosion(plane.x + plane.width/2, plane.y + plane.height/2);
+            
+            // Check if the projectile hits an aircraft
+            if (i >= 0 && i < projectiles.length) { // Make sure the projectile still exists after checking enemies
+                for (let j = aircraft.length - 1; j >= 0; j--) {
+                    if (checkCollision(
+                        {x: projectiles[i].x - CANNON_SIZE/2, y: projectiles[i].y - CANNON_SIZE/2, width: CANNON_SIZE, height: CANNON_SIZE},
+                        {x: aircraft[j].x, y: aircraft[j].y, width: aircraft[j].width, height: aircraft[j].height}
+                    )) {
+                        aircraft[j].health -= 10;
+                        createHitFlash(aircraft[j]);
+                        
+                        // Check if aircraft destroyed
+                        if (aircraft[j].health <= 0) {
+                            // Add explosion
+                            createExplosion(aircraft[j].x + aircraft[j].width/2, aircraft[j].y + aircraft[j].height/2);
+                            
+                            // Remove aircraft
+                            aircraft.splice(j, 1);
+                            
+                            // Increment score
+                            score++;
+                        }
+                        
+                        // Remove projectile
+                        projectiles.splice(i, 1);
+                        break;
+                    }
                 }
-                hasHit = true;
-            }
-        });
-        
-        return !hasHit;
-    });
-    
-    // Update enemy projectiles
-    enemyProjectiles = enemyProjectiles.filter(projectile => {
-        projectile.x += projectile.dx;
-        projectile.y += projectile.dy;
-        
-        const isOnScreen = projectile.x >= 0 && 
-                         projectile.x <= CANVAS_WIDTH && 
-                         projectile.y >= 0 && 
-                         projectile.y <= CANVAS_HEIGHT;
-        
-        if (!isOnScreen) return false;
-        
-        // Check collision with player
-        if (checkCircleRectCollision(
-            { x: projectile.x, y: projectile.y, radius: projectile.size },
-            player
-        )) {
-            player.health -= COLLISION_DAMAGE;
-            player.isHit = true;
-            player.hitTime = Date.now();
-            createHitFlash(player);
-            return false;
-        }
-        
-        return true;
-    });
-    
-    // Update aircraft
-    aircraft = aircraft.filter(plane => {
-        // Move horizontally
-        plane.x -= plane.speed;
-        
-        // Move vertically in a wave pattern
-        if (plane.movingDown) {
-            plane.y += plane.verticalSpeed;
-            if (plane.y > WATER_START - AIRCRAFT_HEIGHT - 20) {
-                plane.movingDown = false;
-            }
-        } else {
-            plane.y -= plane.verticalSpeed;
-            if (plane.y < 20) {
-                plane.movingDown = true;
             }
         }
         
-        // Try to shoot at player
-        aircraftShoot(plane);
-        
-        // Remove if off screen
-        if (plane.x + plane.width < 0) return false;
-        
-        // Check collision with player
-        if (checkCollision(plane, player)) {
-            player.health -= COLLISION_DAMAGE;
-            createHitFlash(player);
-            createExplosion(plane.x + plane.width/2, plane.y + plane.height/2);
-            return false;
-        }
-        
-        return plane.health > 0;
-    });
-    
-    // Update enemies
-    enemies = enemies.filter(enemy => {
-        // Move enemy
-        enemy.x -= enemy.speed;
-        
-        // Try to shoot at player
-        enemyShoot(enemy);
-        
-        // Remove if off screen
-        if (enemy.x + enemy.width < 0) return false;
-        
-        // Check collision with player
-        if (checkCollision(enemy, player)) {
-            player.health -= COLLISION_DAMAGE;
-            createHitFlash(player);
-            createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
-            return false;
-        }
-        
-        return enemy.health > 0;
-    });
-    
-    // Update missiles
-    missiles = missiles.filter(missile => {
-        if (!missile.target || missile.target.health <= 0) {
-            createExplosion(missile.x, missile.y); // Explode if target is lost
-            return false;
-        }
-        
-        // Calculate direction to target's center
-        const targetCenter = {
-            x: missile.target.x + missile.target.width/2,
-            y: missile.target.y + missile.target.height/2
-        };
-        
-        const dx = targetCenter.x - missile.x;
-        const dy = targetCenter.y - missile.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        // Check if missile has reached target
-        if (distance < MISSILE_MIN_DISTANCE || checkCircleRectCollision(
-            { x: missile.x, y: missile.y, radius: MISSILE_SIZE },
-            missile.target
-        )) {
-            missile.target.health -= MISSILE_DAMAGE;
-            createHitFlash(missile.target);
-            createExplosion(missile.x, missile.y);
-            if (missile.target.health <= 0) {
-                score += SCORE_BASIC_ENEMY;  // Add score for destroying enemy with missile
-                createExplosion(targetCenter.x, targetCenter.y);
+        // Update enemy projectiles
+        for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+            enemyProjectiles[i].x += enemyProjectiles[i].vx;
+            enemyProjectiles[i].y += enemyProjectiles[i].vy;
+            
+            // Remove projectiles that go off screen
+            if (enemyProjectiles[i].x > CANVAS_WIDTH || 
+                enemyProjectiles[i].x < 0 || 
+                enemyProjectiles[i].y > CANVAS_HEIGHT || 
+                enemyProjectiles[i].y < 0) {
+                enemyProjectiles.splice(i, 1);
+                continue;
             }
-            return false;
+            
+            // Check for collisions with player
+            if (checkCollision(
+                {x: enemyProjectiles[i].x - CANNON_SIZE/2, y: enemyProjectiles[i].y - CANNON_SIZE/2, width: CANNON_SIZE, height: CANNON_SIZE},
+                {x: player.x, y: player.y, width: player.width, height: player.height}
+            )) {
+                player.health -= 5;
+                player.isHit = true;
+                player.hitTime = Date.now();
+                enemyProjectiles.splice(i, 1);
+            }
         }
         
-        // Update missile direction (homing effect)
-        const targetDx = dx / distance;
-        const targetDy = dy / distance;
-        
-        // Direct velocity adjustment without normalization
-        missile.dx = targetDx * MISSILE_SPEED;
-        missile.dy = targetDy * MISSILE_SPEED;
-        
-        // Move missile
-        missile.x += missile.dx;
-        missile.y += missile.dy;
-        
-        // Check if missile is off screen
-        if (missile.x < 0 || missile.x > CANVAS_WIDTH || 
-            missile.y < 0 || missile.y > CANVAS_HEIGHT) {
-            createExplosion(missile.x, missile.y); // Explode if off screen
-            return false;
+        // Update enemies
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            enemies[i].x -= ENEMY_SPEED;
+            
+            // Remove enemies that go off screen
+            if (enemies[i].x + enemies[i].width < 0) {
+                enemies.splice(i, 1);
+                continue;
+            }
+            
+            // Enemy shooting
+            const now = Date.now();
+            if (now - enemies[i].lastShotTime > ENEMY_SHOT_INTERVAL) {
+                enemyShoot(enemies[i]);
+                enemies[i].lastShotTime = now;
+            }
+            
+            // Check for collisions with player
+            if (checkCollision(
+                {x: enemies[i].x, y: enemies[i].y, width: enemies[i].width, height: enemies[i].height},
+                {x: player.x, y: player.y, width: player.width, height: player.height}
+            )) {
+                // Both take damage on collision
+                player.health -= COLLISION_DAMAGE;
+                enemies[i].health -= COLLISION_DAMAGE;
+                
+                // Visual feedback
+                player.isHit = true;
+                player.hitTime = now;
+                createHitFlash(enemies[i]);
+                
+                // Check if enemy destroyed by collision
+                if (enemies[i].health <= 0) {
+                    createExplosion(enemies[i].x + enemies[i].width/2, enemies[i].y + enemies[i].height/2);
+                    enemies.splice(i, 1);
+                    score++;
+                }
+            }
         }
         
-        return true;
-    });
-    
-    // Check for missile lock-on
-    const now = Date.now();
-    let potentialTarget = null;
-    
-    // Check aircraft first (prioritize air targets)
-    for (const plane of aircraft) {
-        if (isTargetUnderCrosshair(plane)) {
-            potentialTarget = plane;
-            break;
+        // Update aircraft
+        for (let i = aircraft.length - 1; i >= 0; i--) {
+            aircraft[i].x -= AIRCRAFT_SPEED;
+            
+            // Vertical movement (wave pattern)
+            aircraft[i].verticalDirection = 
+                (aircraft[i].y <= 10) ? 1 : 
+                (aircraft[i].y >= WATER_START - aircraft[i].height - 10) ? -1 : 
+                aircraft[i].verticalDirection;
+            
+            aircraft[i].y += aircraft[i].verticalDirection * AIRCRAFT_VERTICAL_SPEED;
+            
+            // Remove aircraft that go off screen
+            if (aircraft[i].x + aircraft[i].width < 0) {
+                aircraft.splice(i, 1);
+                continue;
+            }
+            
+            // Aircraft shooting
+            const now = Date.now();
+            if (now - aircraft[i].lastShotTime > AIRCRAFT_SHOT_INTERVAL) {
+                aircraftShoot(aircraft[i]);
+                aircraft[i].lastShotTime = now;
+            }
+            
+            // Check for collisions with player
+            if (checkCollision(
+                {x: aircraft[i].x, y: aircraft[i].y, width: aircraft[i].width, height: aircraft[i].height},
+                {x: player.x, y: player.y, width: player.width, height: player.height}
+            )) {
+                // Both take damage on collision
+                player.health -= COLLISION_DAMAGE;
+                aircraft[i].health -= COLLISION_DAMAGE;
+                
+                // Visual feedback
+                player.isHit = true;
+                player.hitTime = now;
+                createHitFlash(aircraft[i]);
+                
+                // Check if aircraft destroyed by collision
+                if (aircraft[i].health <= 0) {
+                    createExplosion(aircraft[i].x + aircraft[i].width/2, aircraft[i].y + aircraft[i].height/2);
+                    aircraft.splice(i, 1);
+                    score++;
+                }
+            }
         }
-    }
-    
-    // If no aircraft found, check ships
-    if (!potentialTarget) {
-        for (const ship of enemies) {
-            if (isTargetUnderCrosshair(ship)) {
-                potentialTarget = ship;
+        
+        // Update missiles
+        for (let i = missiles.length - 1; i >= 0; i--) {
+            const missile = missiles[i];
+            
+            // Update target status (might have been destroyed)
+            if (missile.target) {
+                // Check if target still exists
+                if (missile.target.type === 'aircraft') {
+                    if (!aircraft.includes(missile.target)) {
+                        missile.target = null;
+                    }
+                } else if (missile.target.type === 'enemy') {
+                    if (!enemies.includes(missile.target)) {
+                        missile.target = null;
+                    }
+                }
+            }
+            
+            // Guided movement if we have a target
+            if (missile.target) {
+                // Calculate target center
+                const targetCenterX = missile.target.x + missile.target.width / 2;
+                const targetCenterY = missile.target.y + missile.target.height / 2;
+                
+                // Calculate direction to target
+                const dx = targetCenterX - missile.x;
+                const dy = targetCenterY - missile.y;
+                const distToTarget = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distToTarget < MISSILE_MIN_DISTANCE) {
+                    // Direct hit, damage target
+                    missile.target.health -= MISSILE_DAMAGE;
+                    createHitFlash(missile.target);
+                    
+                    // Check if target destroyed
+                    if (missile.target.health <= 0) {
+                        if (missile.target.type === 'aircraft') {
+                            const index = aircraft.indexOf(missile.target);
+                            if (index !== -1) {
+                                createExplosion(
+                                    aircraft[index].x + aircraft[index].width/2, 
+                                    aircraft[index].y + aircraft[index].height/2
+                                );
+                                aircraft.splice(index, 1);
+                                score++;
+                            }
+                        } else if (missile.target.type === 'enemy') {
+                            const index = enemies.indexOf(missile.target);
+                            if (index !== -1) {
+                                createExplosion(
+                                    enemies[index].x + enemies[index].width/2, 
+                                    enemies[index].y + enemies[index].height/2
+                                );
+                                enemies.splice(index, 1);
+                                score++;
+                            }
+                        }
+                    }
+                    
+                    // Create explosion and remove missile
+                    createExplosion(missile.x, missile.y);
+                    missiles.splice(i, 1);
+                    continue;
+                }
+                
+                // Normalize direction
+                const normalizedDx = dx / distToTarget;
+                const normalizedDy = dy / distToTarget;
+                
+                // Apply homing behavior
+                const turnRate = MISSILE_TURN_SPEED;
+                const currentDirMagnitude = Math.sqrt(missile.vx * missile.vx + missile.vy * missile.vy);
+                
+                // Gradually adjust velocity toward target
+                missile.vx = missile.vx + normalizedDx * turnRate;
+                missile.vy = missile.vy + normalizedDy * turnRate;
+                
+                // Normalize velocity to maintain consistent speed
+                const newMagnitude = Math.sqrt(missile.vx * missile.vx + missile.vy * missile.vy);
+                missile.vx = (missile.vx / newMagnitude) * MISSILE_SPEED;
+                missile.vy = (missile.vy / newMagnitude) * MISSILE_SPEED;
+            }
+            
+            // Update position
+            missile.x += missile.vx;
+            missile.y += missile.vy;
+            
+            // Remove missiles that go off screen
+            if (missile.x > CANVAS_WIDTH || 
+                missile.x < 0 || 
+                missile.y > CANVAS_HEIGHT || 
+                missile.y < 0) {
+                missiles.splice(i, 1);
+                continue;
+            }
+            
+            // Check for collisions with enemies (only for unguided missiles)
+            if (!missile.target) {
+                for (let j = 0; j < enemies.length; j++) {
+                    if (checkCollision(
+                        {x: missile.x - MISSILE_SIZE/2, y: missile.y - MISSILE_SIZE/2, width: MISSILE_SIZE, height: MISSILE_SIZE},
+                        {x: enemies[j].x, y: enemies[j].y, width: enemies[j].width, height: enemies[j].height}
+                    )) {
+                        enemies[j].health -= MISSILE_DAMAGE;
+                        createHitFlash(enemies[j]);
+                        
+                        // Check if enemy destroyed
+                        if (enemies[j].health <= 0) {
+                            createExplosion(enemies[j].x + enemies[j].width/2, enemies[j].y + enemies[j].height/2);
+                            enemies.splice(j, 1);
+                            score++;
+                        }
+                        
+                        // Create explosion and remove missile
+                        createExplosion(missile.x, missile.y);
+                        missiles.splice(i, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // Check if the missile still exists after checking enemies
+            if (i >= missiles.length) continue;
+            
+            // Check for collisions with aircraft (only for unguided missiles)
+            if (!missile.target) {
+                for (let j = 0; j < aircraft.length; j++) {
+                    if (checkCollision(
+                        {x: missile.x - MISSILE_SIZE/2, y: missile.y - MISSILE_SIZE/2, width: MISSILE_SIZE, height: MISSILE_SIZE},
+                        {x: aircraft[j].x, y: aircraft[j].y, width: aircraft[j].width, height: aircraft[j].height}
+                    )) {
+                        aircraft[j].health -= MISSILE_DAMAGE;
+                        createHitFlash(aircraft[j]);
+                        
+                        // Check if aircraft destroyed
+                        if (aircraft[j].health <= 0) {
+                            createExplosion(aircraft[j].x + aircraft[j].width/2, aircraft[j].y + aircraft[j].height/2);
+                            aircraft.splice(j, 1);
+                            score++;
+                        }
+                        
+                        // Create explosion and remove missile
+                        createExplosion(missile.x, missile.y);
+                        missiles.splice(i, 1);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Update SSMs
+        updateSSMs();
+        
+        // Find lock-on target (prioritize aircraft)
+        let potentialTarget = null;
+        
+        // First try to find an aircraft
+        for (let i = 0; i < aircraft.length; i++) {
+            if (isTargetUnderCrosshair(aircraft[i])) {
+                potentialTarget = aircraft[i];
+                potentialTarget.type = 'aircraft';
                 break;
             }
         }
-    }
-    
-    // Handle lock-on timing
-    if (potentialTarget) {
-        if (potentialTarget === lockOnTarget) {
-            if (now - lockStartTime >= MISSILE_LOCK_TIME) {
-                // Target is locked on - but don't fire automatically
+        
+        // If no aircraft found, try ships
+        if (!potentialTarget) {
+            for (let i = 0; i < enemies.length; i++) {
+                if (isTargetUnderCrosshair(enemies[i])) {
+                    potentialTarget = enemies[i];
+                    potentialTarget.type = 'enemy';
+                    break;
+                }
+            }
+        }
+        
+        // Handle lock-on and timing
+        const currentTime = Date.now();
+        if (potentialTarget) {
+            if (lockOnTarget !== potentialTarget) {
+                // Start lock-on process for new target
                 lockOnTarget = potentialTarget;
+                lockStartTime = currentTime;
+            } else if (currentTime - lockStartTime < MISSILE_LOCK_TIME) {
+                // Still locking on
+            } else {
+                // Lock complete, keep targeting
             }
         } else {
-            lockOnTarget = potentialTarget;
-            lockStartTime = now;
+            // No target under crosshair
+            lockOnTarget = null;
         }
-    } else {
-        lockOnTarget = null;
-    }
-
-    // Update explosions
-    explosions = explosions.filter(particles => {
-        particles.forEach(particle => {
-            particle.x += particle.dx;
-            particle.y += particle.dy;
-            particle.life -= 16; // Assuming 60 FPS
-        });
-        return particles.some(particle => particle.life > 0);
-    });
-
-    // Update hit flashes
-    hitFlashes = hitFlashes.filter(flash => {
-        flash.duration -= 16;
-        return flash.duration > 0;
-    });
-
-    if (TOUCH_CONTROLS.enabled) {
-        // Update player movement based on touch controls
-        player.moving.up = touchControls.up.pressed;
-        player.moving.down = touchControls.down.pressed;
-        player.moving.left = touchControls.left.pressed;
-        player.moving.right = touchControls.right.pressed;
+        
+        // Update explosions
+        for (let i = explosions.length - 1; i >= 0; i--) {
+            explosions[i].time += 16; // Assuming ~60fps
+            if (explosions[i].time >= EXPLOSION_DURATION) {
+                explosions.splice(i, 1);
+            }
+        }
+        
+        // Update hit flashes
+        for (let i = hitFlashes.length - 1; i >= 0; i--) {
+            hitFlashes[i].duration -= 16;
+            if (hitFlashes[i].duration <= 0) {
+                hitFlashes.splice(i, 1);
+            }
+        }
+        
+        // Reset player hit state after time passes
+        if (player.isHit && Date.now() - player.hitTime > HIT_FLASH_DURATION) {
+            player.isHit = false;
+        }
+        
+        // Spawn enemies periodically
+        const now = Date.now();
+        if (now - lastEnemySpawnTime > ENEMY_SPAWN_INTERVAL) {
+            spawnEnemy();
+            lastEnemySpawnTime = now;
+        }
+        
+        // Spawn aircraft periodically
+        if (now - lastAircraftSpawnTime > AIRCRAFT_SPAWN_INTERVAL) {
+            spawnAircraft();
+            lastAircraftSpawnTime = now;
+        }
+    } catch (error) {
+        console.error('Error in update:', error);
+        showError(error);
     }
 }
 
@@ -990,11 +1439,11 @@ function fireMissile(target) {
     const dy = target.y - shipCenter.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    missiles.push({
+    ssms.push({
         x: shipCenter.x,
         y: shipCenter.y,
-        dx: (dx / distance) * MISSILE_SPEED,
-        dy: (dy / distance) * MISSILE_SPEED,
+        vx: (dx / distance) * MISSILE_SPEED,
+        vy: (dy / distance) * MISSILE_SPEED,
         target: target
     });
 }
@@ -1034,8 +1483,9 @@ function drawTargetingVector() {
         );
         
         if (intersection) {
-            endX = intersection.x;
-            endY = intersection.y;
+            // Instead of using intersection point, calculate center of the target
+            endX = enemy.x + enemy.width / 2;
+            endY = enemy.y + enemy.height / 2;
             lockOnTarget = enemy;
             targetFound = true;
             break;
@@ -1046,16 +1496,9 @@ function drawTargetingVector() {
         lockOnTarget = null;
     }
     
-    // Draw targeting vector
-    ctx.beginPath();
-    ctx.moveTo(shipCenter.x, shipCenter.y);
-    ctx.lineTo(endX, endY);
-    ctx.strokeStyle = lockOnTarget ? 'rgba(255, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    
-    // Draw lock-on indicator if target found
+    // Only draw lock-on indicator - the targeting line is drawn in the main draw function
     if (lockOnTarget) {
+        // Draw lock-on indicator
         ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
         ctx.strokeRect(
             lockOnTarget.x - 2,
@@ -1065,7 +1508,7 @@ function drawTargetingVector() {
         );
     }
 
-    // Draw crosshair
+    // Draw crosshair (always show this)
     const crosshairSize = 10;
     const lineWidth = 2;
     
@@ -1140,6 +1583,41 @@ function drawMissiles() {
     });
 }
 
+// Draw SSMs
+function drawSSMs() {
+    ssms.forEach(ssm => {
+        // Draw the SSM body
+        ctx.fillStyle = SSM_COLOR;
+        ctx.beginPath();
+        ctx.arc(ssm.x, ssm.y, SSM_SIZE, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw the radar cone if radar is active
+        if (ssm.radarActive) {
+            // Calculate the radar cone vertices
+            const coneLength = SSM_RADAR_RANGE;
+            const coneWidth = Math.tan(SSM_RADAR_ANGLE / 2) * coneLength;
+            
+            // Draw radar cone
+            ctx.beginPath();
+            ctx.moveTo(ssm.x, ssm.y);
+            ctx.lineTo(ssm.x + coneLength, ssm.y - coneWidth);
+            ctx.lineTo(ssm.x + coneLength, ssm.y + coneWidth);
+            ctx.closePath();
+            
+            // Fill with a semi-transparent orange gradient
+            const gradient = ctx.createRadialGradient(
+                ssm.x, ssm.y, 0,
+                ssm.x, ssm.y, coneLength
+            );
+            gradient.addColorStop(0, 'rgba(255, 165, 0, 0.5)');
+            gradient.addColorStop(1, 'rgba(255, 165, 0, 0.0)');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+        }
+    });
+}
+
 // Draw game objects
 function draw() {
     // Clear the canvas
@@ -1153,11 +1631,33 @@ function draw() {
     // Draw environment first
     drawEnvironment();
     
+    // Draw targeting vector first (before enemies) so it appears behind targets
+    if (lockOnTarget) {
+        const shipCenter = {
+            x: player.x + player.width,
+            y: player.y + player.height / 2
+        };
+        
+        // Calculate center of target
+        const targetCenter = {
+            x: lockOnTarget.x + lockOnTarget.width / 2,
+            y: lockOnTarget.y + lockOnTarget.height / 2
+        };
+        
+        // Draw the targeting line
+        ctx.beginPath();
+        ctx.moveTo(shipCenter.x, shipCenter.y);
+        ctx.lineTo(targetCenter.x, targetCenter.y);
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+    
     // Draw enemies with hit flash effect
     drawEnemies();
     drawAircraft();
     
-    // Draw targeting vector
+    // Draw targeting vector (now only drawing crosshair and lock-on box)
     drawTargetingVector();
     
     // Draw projectiles
@@ -1165,6 +1665,9 @@ function draw() {
     
     // Draw missiles
     drawMissiles();
+    
+    // Draw SSMs
+    drawSSMs();
     
     // Draw player with hit flash effect
     const isPlayerFlashing = hitFlashes.some(flash => flash.target === player);
@@ -1177,12 +1680,15 @@ function draw() {
     ctx.fill();
     
     // Draw explosions
-    explosions.forEach(particles => {
-        particles.forEach(particle => {
-            const alpha = particle.life / EXPLOSION_DURATION;
+    explosions.forEach(explosion => {
+        const alpha = 1 - (explosion.time / EXPLOSION_DURATION);
+        explosion.particles.forEach(particle => {
             ctx.fillStyle = `${particle.color}${Math.floor(alpha * 255).toString(16).padStart(2, '0')}`;
             ctx.beginPath();
-            ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+            // Update particle position based on time passed
+            const posX = particle.x + particle.dx * (explosion.time / 16);
+            const posY = particle.y + particle.dy * (explosion.time / 16);
+            ctx.arc(posX, posY, particle.size, 0, Math.PI * 2);
             ctx.fill();
         });
     });
@@ -1193,11 +1699,6 @@ function draw() {
     // Draw game over screen if needed
     if (gameOver) {
         drawGameOver();
-    }
-
-    // Draw touch controls if enabled
-    if (TOUCH_CONTROLS.enabled && !isEnteringName && !gameOver) {
-        drawTouchControls();
     }
 }
 
@@ -1223,6 +1724,9 @@ function drawUI() {
     // Missile count
     ctx.fillText(`Missiles: ${player.missiles}`, 15, 45);
     
+    // SSM count
+    ctx.fillText(`SSMs: ${player.ssms}`, 15, 65);
+    
     // Score display
     ctx.font = '20px Arial';
     ctx.textAlign = 'right';
@@ -1236,22 +1740,22 @@ function drawNameEntry() {
     ctx.fillStyle = AIR_COLOR;
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
-    // Draw title
+    // Draw title - moved up 100px
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '48px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('BATTLESHIPS', CANVAS_WIDTH/2, CANVAS_HEIGHT/4);
+    ctx.fillText('BATTLESHIPS', CANVAS_WIDTH/2, CANVAS_HEIGHT/4 - 100);
     
-    // Draw name entry interface
+    // Draw name entry interface - moved up 200px
     ctx.font = '30px Arial';
-    ctx.fillText('Enter Your Name:', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    ctx.fillText('Enter Your Name:', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 240);
     
-    // Draw name entry box
+    // Draw name entry box - moved up 200px
     const boxWidth = 300;
     const boxHeight = 60;
     const boxX = CANVAS_WIDTH/2 - boxWidth/2;
-    const boxY = CANVAS_HEIGHT/2;
+    const boxY = CANVAS_HEIGHT/2 - 200;
     
     // Draw box background
     ctx.fillStyle = '#000033';
@@ -1260,45 +1764,63 @@ function drawNameEntry() {
     ctx.lineWidth = 2;
     ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
     
-    // Draw name with blinking cursor
+    // Draw name with blinking cursor - moved up 200px
     const displayName = playerName + (Math.floor(Date.now() / 500) % 2 ? '_' : ' ');
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '48px "Courier New"';  // Monospace font for arcade feel
-    ctx.fillText(displayName.padEnd(NAME_MAX_LENGTH, '.'), CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    ctx.fillText(displayName.padEnd(NAME_MAX_LENGTH, '.'), CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 160);
     
     ctx.font = '20px Arial';
-    ctx.fillText('Use A-Z and 0-9 • Press ENTER to Start', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 90);
+    ctx.fillText('Use A-Z and 0-9 • Press ENTER to Start', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 110);
     
     // Draw virtual keyboard if enabled
     if (VIRTUAL_KEYBOARD.enabled) {
         drawVirtualKeyboard();
         
-        // Add touch-friendly buttons
-        const buttonWidth = 120;
-        const buttonHeight = 40;
-        const buttonSpacing = 20;
+        // Calculate position below the keyboard (keyboard height + padding)
+        const keyboardHeight = VIRTUAL_KEYBOARD.keys.length * (VIRTUAL_KEYBOARD.keySize + VIRTUAL_KEYBOARD.padding);
+        const buttonsY = (CANVAS_HEIGHT/2 - 80) + keyboardHeight + 30; // Position below keyboard with 30px padding
+        
+        // Add touch-friendly buttons with improved visibility
+        const buttonWidth = 140; // Wider buttons
+        const buttonHeight = 60; // Taller buttons
+        const buttonSpacing = 30; // More space between buttons
         const totalWidth = buttonWidth * 2 + buttonSpacing;
         const startX = (CANVAS_WIDTH - totalWidth) / 2;
-        const startY = CANVAS_HEIGHT - 80;
         
-        // Draw Backspace button
-        ctx.fillStyle = TOUCH_CONTROLS.buttonColor;
-        ctx.fillRect(startX, startY, buttonWidth, buttonHeight);
+        // Draw Backspace button with improved visibility
+        // Create gradient for backspace button
+        const backspaceGradient = ctx.createLinearGradient(startX, buttonsY, startX, buttonsY + buttonHeight);
+        backspaceGradient.addColorStop(0, '#FF4444');
+        backspaceGradient.addColorStop(1, '#CC0000');
+        ctx.fillStyle = backspaceGradient;
+        ctx.fillRect(startX, buttonsY, buttonWidth, buttonHeight);
         ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(startX, startY, buttonWidth, buttonHeight);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '20px Arial';
+        ctx.lineWidth = 3; // Thicker border
+        ctx.strokeRect(startX, buttonsY, buttonWidth, buttonHeight);
+        ctx.fillStyle = '#FFFFFF'; // White text
+        ctx.font = '24px Arial'; // Larger font
         ctx.textAlign = 'center';
-        ctx.fillText('Backspace', startX + buttonWidth/2, startY + buttonHeight/2 + 7);
+        ctx.fillText('Backspace', startX + buttonWidth/2, buttonsY + buttonHeight/2 + 7);
         
-        // Draw Enter button
-        ctx.fillStyle = playerName.length > 0 ? '#00FF00' : TOUCH_CONTROLS.buttonColor;
-        ctx.fillRect(startX + buttonWidth + buttonSpacing, startY, buttonWidth, buttonHeight);
+        // Draw Enter button with improved visibility
+        // Create gradient for enter button
+        const enterGradient = ctx.createLinearGradient(
+            startX + buttonWidth + buttonSpacing, 
+            buttonsY, 
+            startX + buttonWidth + buttonSpacing, 
+            buttonsY + buttonHeight
+        );
+        enterGradient.addColorStop(0, playerName.length > 0 ? '#44FF44' : '#888888');
+        enterGradient.addColorStop(1, playerName.length > 0 ? '#00CC00' : '#555555');
+        ctx.fillStyle = enterGradient;
+        ctx.fillRect(startX + buttonWidth + buttonSpacing, buttonsY, buttonWidth, buttonHeight);
         ctx.strokeStyle = '#FFFFFF';
-        ctx.strokeRect(startX + buttonWidth + buttonSpacing, startY, buttonWidth, buttonHeight);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillText('Enter', startX + buttonWidth + buttonSpacing + buttonWidth/2, startY + buttonHeight/2 + 7);
+        ctx.lineWidth = 3; // Thicker border
+        ctx.strokeRect(startX + buttonWidth + buttonSpacing, buttonsY, buttonWidth, buttonHeight);
+        ctx.fillStyle = '#FFFFFF'; // White text
+        ctx.font = '28px Arial'; // Even larger font for Enter
+        ctx.fillText('Enter', startX + buttonWidth + buttonSpacing + buttonWidth/2, buttonsY + buttonHeight/2 + 7);
     }
 }
 
@@ -1382,6 +1904,11 @@ function handleNameEntry(key) {
         if (playerName.length > 0) {
             isEnteringName = false;  // Exit name entry mode
             gameStarted = true;      // Start the game
+            
+            // Now that name entry is complete, set up joysticks if enabled
+            if (JOYSTICK_CONTROLS.enabled) {
+                setupJoysticks();
+            }
         }
     } else if (key === 'Backspace') {
         playerName = playerName.slice(0, -1);
@@ -1409,6 +1936,7 @@ async function loadHighScores() {
 function resetGame() {
     player.health = 100;
     player.missiles = MISSILE_MAX_COUNT;
+    player.ssms = SSM_MAX_COUNT; // Reset SSM count
     player.x = 50;
     player.y = CANVAS_HEIGHT * 2/3;
     
@@ -1417,9 +1945,32 @@ function resetGame() {
     enemies = [];
     aircraft = [];
     missiles = [];
+    ssms = []; // Clear SSMs
     explosions = [];
     hitFlashes = [];
     score = 0;  // Reset score
+    
+    // Clean up joysticks when resetting the game
+    if (joysticks.movement) {
+        joysticks.movement.destroy();
+        joysticks.movement = null;
+    }
+    if (joysticks.action) {
+        joysticks.action.destroy();
+        joysticks.action = null;
+    }
+    
+    // Remove any existing missile button
+    const existingMissileBtn = document.getElementById('missileButton');
+    if (existingMissileBtn) {
+        document.body.removeChild(existingMissileBtn);
+    }
+    
+    // Remove any existing SSM button
+    const existingSsmBtn = document.getElementById('ssmButton');
+    if (existingSsmBtn) {
+        document.body.removeChild(existingSsmBtn);
+    }
     
     isEnteringName = true;  // Go back to name entry
     playerName = '';        // Clear the name
@@ -1439,21 +1990,23 @@ window.addEventListener('load', init);
 
 // Create explosion effect
 function createExplosion(x, y) {
-    const particles = [];
-    for (let i = 0; i < EXPLOSION_PARTICLES; i++) {
-        const angle = (Math.PI * 2 / EXPLOSION_PARTICLES) * i;
-        const speed = 2 + Math.random() * 2;
-        particles.push({
-            x,
-            y,
-            dx: Math.cos(angle) * speed,
-            dy: Math.sin(angle) * speed,
-            size: 2 + Math.random() * 3,
-            color: EXPLOSION_COLORS[Math.floor(Math.random() * EXPLOSION_COLORS.length)],
-            life: EXPLOSION_DURATION
-        });
-    }
-    explosions.push(particles);
+    explosions.push({
+        x: x,
+        y: y,
+        particles: Array.from({ length: EXPLOSION_PARTICLES }, (_, i) => {
+            const angle = (Math.PI * 2 / EXPLOSION_PARTICLES) * i;
+            const speed = 2 + Math.random() * 2;
+            return {
+                x: x,
+                y: y,
+                dx: Math.cos(angle) * speed,
+                dy: Math.sin(angle) * speed,
+                size: 2 + Math.random() * 3,
+                color: EXPLOSION_COLORS[Math.floor(Math.random() * EXPLOSION_COLORS.length)]
+            };
+        }),
+        time: 0
+    });
 }
 
 // Create hit flash effect
@@ -1467,13 +2020,17 @@ function createHitFlash(target) {
 // Update handleTouchStart function
 function handleTouchStart(e) {
     e.preventDefault();
+    console.log("Touch start event detected");
+    
     const rect = canvas.getBoundingClientRect();
     const scaleX = CANVAS_WIDTH / rect.width;
     const scaleY = CANVAS_HEIGHT / rect.height;
     
+    // Log the touch for debugging
     Array.from(e.touches).forEach(touch => {
         const x = (touch.clientX - rect.left) * scaleX;
         const y = (touch.clientY - rect.top) * scaleY;
+        console.log(`Touch at: (${x}, ${y}), isEnteringName: ${isEnteringName}`);
         
         if (gameOver) {
             const button = gameOver.restartButton;
@@ -1486,34 +2043,15 @@ function handleTouchStart(e) {
             return; // Don't process other touches if game is over
         }
         
-        if (isEnteringName && VIRTUAL_KEYBOARD.enabled) {
+        if (isEnteringName) {
+            console.log("Processing touch for name entry");
             handleVirtualKeyboardTouch(x, y);
-            triggerHapticFeedback(25);
+            return; // Stop processing once we've handled the name entry
         } else {
-            // Check if touch is on any control button
-            let touchedControl = false;
-            Object.entries(touchControls).forEach(([key, button]) => {
-                if (x >= button.x && x <= button.x + button.width &&
-                    y >= button.y && y <= button.y + button.height) {
-                    button.pressed = true;
-                    touchedControl = true;
-                    if (key === 'fire') {
-                        isMouseDown = true;
-                        triggerHapticFeedback(50);
-                    } else if (key === 'missile' && lockOnTarget && player.missiles > 0) {
-                        fireMissile(lockOnTarget);
-                        player.missiles--;
-                        triggerHapticFeedback(100);
-                    }
-                }
-            });
-            
-            // Update aim position for non-button touches only if in front of the ship
-            if (!touchedControl) {
-                if (x > player.x + player.width) {  // Only if touch is to the right of the ship
-                    mouse.x = x;
-                    mouse.y = y;
-                }
+            // Update aim position if touch is in front of the ship
+            if (x > player.x + player.width) {  // Only if touch is to the right of the ship
+                mouse.x = x;
+                mouse.y = y;
             }
         }
     });
@@ -1521,9 +2059,11 @@ function handleTouchStart(e) {
 
 // Add virtual keyboard touch handling
 function handleVirtualKeyboardTouch(x, y) {
+    console.log("Virtual keyboard touch at:", x, y);
+    
     const keySize = Math.max(VIRTUAL_KEYBOARD.keySize, MOBILE_SETTINGS.minimumTouchSize);
     const padding = VIRTUAL_KEYBOARD.padding;
-    const startY = CANVAS_HEIGHT/2 + 120;
+    const startY = CANVAS_HEIGHT/2 - 80; // Updated to match drawVirtualKeyboard
     
     let keyPressed = false;
     
@@ -1541,34 +2081,53 @@ function handleVirtualKeyboardTouch(x, y) {
                 if (playerName.length < NAME_MAX_LENGTH) {
                     playerName += key;
                     keyPressed = true;
+                    console.log("Key pressed:", key);
                 }
             }
         });
     });
     
-    // Check special buttons
-    const buttonWidth = Math.max(120, MOBILE_SETTINGS.minimumTouchSize);
-    const buttonHeight = Math.max(40, MOBILE_SETTINGS.minimumTouchSize);
-    const buttonSpacing = 20;
+    // Calculate position below the keyboard (keyboard height + padding)
+    const keyboardHeight = VIRTUAL_KEYBOARD.keys.length * (keySize + padding);
+    const buttonsY = startY + keyboardHeight + 30; // Position below keyboard with 30px padding
+    
+    // Match button dimensions with drawNameEntry function
+    const buttonWidth = 140;
+    const buttonHeight = 60;
+    const buttonSpacing = 30;
     const totalWidth = buttonWidth * 2 + buttonSpacing;
     const buttonsStartX = (CANVAS_WIDTH - totalWidth) / 2;
-    const buttonsStartY = CANVAS_HEIGHT - 80;
+    
+    console.log("Backspace button bounds:", 
+                buttonsStartX, buttonsY, 
+                buttonsStartX + buttonWidth, buttonsY + buttonHeight);
     
     // Backspace button
     if (x >= buttonsStartX && x < buttonsStartX + buttonWidth &&
-        y >= buttonsStartY && y < buttonsStartY + buttonHeight) {
+        y >= buttonsY && y < buttonsY + buttonHeight) {
         playerName = playerName.slice(0, -1);
         keyPressed = true;
+        console.log("Backspace pressed");
     }
     
+    console.log("Enter button bounds:", 
+                buttonsStartX + buttonWidth + buttonSpacing, buttonsY,
+                buttonsStartX + buttonWidth * 2 + buttonSpacing, buttonsY + buttonHeight);
+                
     // Enter button
     if (x >= buttonsStartX + buttonWidth + buttonSpacing && 
         x < buttonsStartX + buttonWidth * 2 + buttonSpacing &&
-        y >= buttonsStartY && y < buttonsStartY + buttonHeight) {
+        y >= buttonsY && y < buttonsY + buttonHeight) {
+        console.log("Enter button touched");
         if (playerName.length > 0) {
+            console.log("Starting game with name:", playerName);
             isEnteringName = false;
             gameStarted = true;
             updateCursorVisibility();
+            // Set up joysticks now that we're starting the game
+            if (JOYSTICK_CONTROLS.enabled) {
+                setupJoysticks();
+            }
             keyPressed = true;
         }
     }
@@ -1580,7 +2139,7 @@ function handleVirtualKeyboardTouch(x, y) {
 
 // Add virtual keyboard drawing function
 function drawVirtualKeyboard() {
-    const startY = CANVAS_HEIGHT/2 + 120;
+    const startY = CANVAS_HEIGHT/2 - 80; // Changed from +120 to -80 (moved up 200px)
     const keySize = VIRTUAL_KEYBOARD.keySize;
     const padding = VIRTUAL_KEYBOARD.padding;
     
@@ -1650,113 +2209,321 @@ function triggerHapticFeedback(duration = 50) {
 
 // Add touch event handlers after handleTouchStart
 function handleTouchMove(e) {
+    if (!isEnteringName) return;
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = CANVAS_WIDTH / rect.width;
-    const scaleY = CANVAS_HEIGHT / rect.height;
-    
-    Array.from(e.touches).forEach(touch => {
-        const x = (touch.clientX - rect.left) * scaleX;
-        const y = (touch.clientY - rect.top) * scaleY;
-        
-        // Update aim position if not pressing any buttons and touch is in front of ship
-        if (!Object.values(touchControls).some(button => button.pressed) && x > player.x + player.width) {
-            mouse.x = x;
-            mouse.y = y;
-        }
-    });
 }
 
 function handleTouchEnd(e) {
+    if (!isEnteringName) return;
     e.preventDefault();
+}
+
+// Simplify touch event handlers to only handle virtual keyboard during name entry
+function handleTouchMove(e) {
+    if (!isEnteringName) return;
+    e.preventDefault();
+}
+
+function handleTouchEnd(e) {
+    if (!isEnteringName) return;
+    e.preventDefault();
+}
+
+// Remove drawTouchControls function
+
+// Update draw function to remove touch controls rendering
+function draw() {
+    // Clear the canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Reset all touch controls if no touches remain
-    if (e.touches.length === 0) {
-        Object.values(touchControls).forEach(button => {
-            button.pressed = false;
-        });
-        isMouseDown = false;
-    } else {
-        // Check remaining touches to maintain pressed states
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = CANVAS_WIDTH / rect.width;
-        const scaleY = CANVAS_HEIGHT / rect.height;
+    if (isEnteringName) {
+        drawNameEntry();
+        return;
+    }
+    
+    // Draw environment first
+    drawEnvironment();
+    
+    // Draw targeting vector first (before enemies) so it appears behind targets
+    if (lockOnTarget) {
+        const shipCenter = {
+            x: player.x + player.width,
+            y: player.y + player.height / 2
+        };
         
-        // Reset all buttons first
-        Object.values(touchControls).forEach(button => {
-            button.pressed = false;
-        });
+        // Calculate center of target
+        const targetCenter = {
+            x: lockOnTarget.x + lockOnTarget.width / 2,
+            y: lockOnTarget.y + lockOnTarget.height / 2
+        };
         
-        // Check which buttons are still being pressed
-        Array.from(e.touches).forEach(touch => {
-            const x = (touch.clientX - rect.left) * scaleX;
-            const y = (touch.clientY - rect.top) * scaleY;
-            
-            Object.entries(touchControls).forEach(([key, button]) => {
-                if (x >= button.x && x <= button.x + button.width &&
-                    y >= button.y && y <= button.y + button.height) {
-                    button.pressed = true;
-                    if (key === 'fire') {
-                        isMouseDown = true;
-                    }
-                }
-            });
+        // Draw the targeting line
+        ctx.beginPath();
+        ctx.moveTo(shipCenter.x, shipCenter.y);
+        ctx.lineTo(targetCenter.x, targetCenter.y);
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+    
+    // Draw enemies with hit flash effect
+    drawEnemies();
+    drawAircraft();
+    
+    // Draw targeting vector (now only drawing crosshair and lock-on box)
+    drawTargetingVector();
+    
+    // Draw projectiles
+    drawProjectiles();
+    
+    // Draw missiles
+    drawMissiles();
+    
+    // Draw SSMs
+    drawSSMs();
+    
+    // Draw player with hit flash effect
+    const isPlayerFlashing = hitFlashes.some(flash => flash.target === player);
+    ctx.fillStyle = isPlayerFlashing ? '#FFFFFF' : '#00FF00';
+    ctx.beginPath();
+    ctx.moveTo(player.x + player.width, player.y + player.height/2);
+    ctx.lineTo(player.x, player.y);
+    ctx.lineTo(player.x, player.y + player.height);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Draw explosions
+    explosions.forEach(explosion => {
+        const alpha = 1 - (explosion.time / EXPLOSION_DURATION);
+        explosion.particles.forEach(particle => {
+            ctx.fillStyle = `${particle.color}${Math.floor(alpha * 255).toString(16).padStart(2, '0')}`;
+            ctx.beginPath();
+            // Update particle position based on time passed
+            const posX = particle.x + particle.dx * (explosion.time / 16);
+            const posY = particle.y + particle.dy * (explosion.time / 16);
+            ctx.arc(posX, posY, particle.size, 0, Math.PI * 2);
+            ctx.fill();
         });
+    });
+    
+    // Draw UI elements
+    drawUI();
+    
+    // Draw game over screen if needed
+    if (gameOver) {
+        drawGameOver();
     }
 }
 
-// Add touch controls drawing function
-function drawTouchControls() {
-    const size = TOUCH_CONTROLS.buttonSize;
+// Update resetGame to clean up joysticks
+function resetGame() {
+    player.health = 100;
+    player.missiles = MISSILE_MAX_COUNT;
+    player.ssms = SSM_MAX_COUNT; // Reset SSM count
+    player.x = 50;
+    player.y = CANVAS_HEIGHT * 2/3;
     
-    // Draw D-pad
-    Object.entries(touchControls).forEach(([key, button]) => {
-        // Choose color based on button type and state
-        let color;
-        if (key === 'fire') {
-            color = button.pressed ? TOUCH_CONTROLS.fireButtonActiveColor : TOUCH_CONTROLS.fireButtonColor;
-        } else if (key === 'missile') {
-            color = button.pressed ? TOUCH_CONTROLS.missileButtonActiveColor : TOUCH_CONTROLS.missileButtonColor;
-        } else {
-            color = button.pressed ? TOUCH_CONTROLS.buttonActiveColor : TOUCH_CONTROLS.buttonColor;
-        }
-        
-        // Draw button background
-        ctx.fillStyle = color;
-        ctx.fillRect(button.x, button.y, button.width, button.height);
-        
-        // Draw button border
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(button.x, button.y, button.width, button.height);
-        
-        // Draw button symbol
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '24px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const centerX = button.x + button.width/2;
-        const centerY = button.y + button.height/2;
-        
-        switch(key) {
-            case 'up':
-                ctx.fillText('↑', centerX, centerY);
-                break;
-            case 'down':
-                ctx.fillText('↓', centerX, centerY);
-                break;
-            case 'left':
-                ctx.fillText('←', centerX, centerY);
-                break;
-            case 'right':
-                ctx.fillText('→', centerX, centerY);
-                break;
-            case 'fire':
-                ctx.fillText('🔥', centerX, centerY);
-                break;
-            case 'missile':
-                ctx.fillText('🚀', centerX, centerY);
-                break;
-        }
+    projectiles = [];
+    enemyProjectiles = [];
+    enemies = [];
+    aircraft = [];
+    missiles = [];
+    ssms = []; // Clear SSMs
+    explosions = [];
+    hitFlashes = [];
+    score = 0;  // Reset score
+    
+    // Clean up joysticks when resetting the game
+    if (joysticks.movement) {
+        joysticks.movement.destroy();
+        joysticks.movement = null;
+    }
+    if (joysticks.action) {
+        joysticks.action.destroy();
+        joysticks.action = null;
+    }
+    
+    // Remove any existing missile button
+    const existingMissileBtn = document.getElementById('missileButton');
+    if (existingMissileBtn) {
+        document.body.removeChild(existingMissileBtn);
+    }
+    
+    isEnteringName = true;  // Go back to name entry
+    playerName = '';        // Clear the name
+    gameStarted = false;    // Reset game started flag
+    gameOver = false;
+}
+
+// Fire Ship-to-Ship Missile
+function fireSSM() {
+    const shipCenter = {
+        x: player.x + player.width,
+        y: player.y + player.height / 2
+    };
+    
+    // SSM always fires straight ahead
+    ssms.push({
+        x: shipCenter.x,
+        y: shipCenter.y,
+        vx: SSM_SPEED,
+        vy: 0,
+        launchTime: Date.now(),
+        radarActive: false,
+        target: null
     });
-} 
+}
+
+// Update Ship-to-Ship Missiles
+function updateSSMs() {
+    for (let i = ssms.length - 1; i >= 0; i--) {
+        const ssm = ssms[i];
+        const currentTime = Date.now();
+        
+        // Check if radar should be activated
+        if (!ssm.radarActive && currentTime - ssm.launchTime >= SSM_RADAR_ACTIVATION_TIME) {
+            ssm.radarActive = true;
+        }
+        
+        // If radar is active and no target, scan for targets
+        if (ssm.radarActive && !ssm.target) {
+            // Scan for enemies inside the radar cone
+            for (let j = 0; j < enemies.length; j++) {
+                const enemy = enemies[j];
+                
+                // Calculate enemy center position
+                const enemyCenter = {
+                    x: enemy.x + enemy.width / 2,
+                    y: enemy.y + enemy.height / 2
+                };
+                
+                // Calculate distance and angle to enemy
+                const dx = enemyCenter.x - ssm.x;
+                const dy = enemyCenter.y - ssm.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Skip if enemy is behind SSM or too far
+                if (dx < 0 || distance > SSM_RADAR_RANGE) continue;
+                
+                // Calculate angle (in radians) between SSM heading and enemy position
+                // Since SSM flies straight ahead, its heading is 0 radians (right)
+                const angle = Math.abs(Math.atan2(dy, dx));
+                
+                // Check if enemy is within the radar cone
+                if (angle <= SSM_RADAR_ANGLE / 2) {
+                    ssm.target = enemy;
+                    ssm.targetType = 'enemy';
+                    break;
+                }
+            }
+            
+            // If no enemy found, check aircraft
+            if (!ssm.target) {
+                for (let j = 0; j < aircraft.length; j++) {
+                    const craft = aircraft[j];
+                    
+                    // Calculate aircraft center position
+                    const craftCenter = {
+                        x: craft.x + craft.width / 2,
+                        y: craft.y + craft.height / 2
+                    };
+                    
+                    // Calculate distance and angle to aircraft
+                    const dx = craftCenter.x - ssm.x;
+                    const dy = craftCenter.y - ssm.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Skip if aircraft is behind SSM or too far
+                    if (dx < 0 || distance > SSM_RADAR_RANGE) continue;
+                    
+                    // Calculate angle (in radians) between SSM heading and aircraft position
+                    const angle = Math.abs(Math.atan2(dy, dx));
+                    
+                    // Check if aircraft is within the radar cone
+                    if (angle <= SSM_RADAR_ANGLE / 2) {
+                        ssm.target = craft;
+                        ssm.targetType = 'aircraft';
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // If SSM has a target, update its movement
+        if (ssm.target) {
+            // Calculate target center
+            const targetCenterX = ssm.target.x + ssm.target.width / 2;
+            const targetCenterY = ssm.target.y + ssm.target.height / 2;
+            
+            // Calculate direction to target
+            const dx = targetCenterX - ssm.x;
+            const dy = targetCenterY - ssm.y;
+            const distToTarget = Math.sqrt(dx * dx + dy * dy);
+            
+            // Check if we've hit the target
+            if (distToTarget < SSM_MIN_DISTANCE) {
+                // Deal damage
+                ssm.target.health -= SSM_DAMAGE;
+                createHitFlash(ssm.target);
+                
+                // Check if target is destroyed
+                if (ssm.target.health <= 0) {
+                    if (ssm.targetType === 'aircraft') {
+                        const index = aircraft.indexOf(ssm.target);
+                        if (index !== -1) {
+                            createExplosion(
+                                aircraft[index].x + aircraft[index].width/2, 
+                                aircraft[index].y + aircraft[index].height/2
+                            );
+                            aircraft.splice(index, 1);
+                            score++;
+                        }
+                    } else { // enemy ship
+                        const index = enemies.indexOf(ssm.target);
+                        if (index !== -1) {
+                            createExplosion(
+                                enemies[index].x + enemies[index].width/2, 
+                                enemies[index].y + enemies[index].height/2
+                            );
+                            enemies.splice(index, 1);
+                            score++;
+                        }
+                    }
+                }
+                
+                // Create explosion and remove SSM
+                createExplosion(ssm.x, ssm.y);
+                ssms.splice(i, 1);
+                continue;
+            }
+            
+            // Normalize direction
+            const normalizedDx = dx / distToTarget;
+            const normalizedDy = dy / distToTarget;
+            
+            // Apply homing behavior (less agile than regular missiles)
+            const turnRate = SSM_TURN_SPEED;
+            
+            // Gradually adjust velocity toward target
+            ssm.vx = ssm.vx + normalizedDx * turnRate;
+            ssm.vy = ssm.vy + normalizedDy * turnRate;
+            
+            // Normalize velocity to maintain consistent speed
+            const newMagnitude = Math.sqrt(ssm.vx * ssm.vx + ssm.vy * ssm.vy);
+            ssm.vx = (ssm.vx / newMagnitude) * SSM_SPEED;
+            ssm.vy = (ssm.vy / newMagnitude) * SSM_SPEED;
+        }
+        
+        // Update position
+        ssm.x += ssm.vx;
+        ssm.y += ssm.vy;
+        
+        // Remove SSMs that go off screen
+        if (ssm.x > CANVAS_WIDTH || 
+            ssm.x < 0 || 
+            ssm.y > CANVAS_HEIGHT || 
+            ssm.y < 0) {
+            ssms.splice(i, 1);
+        }
+    }
+}
